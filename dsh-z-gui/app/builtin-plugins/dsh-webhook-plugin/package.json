@@ -1,0 +1,53 @@
+{
+  "name": "dsh-webhook-plugin",
+  "version": "0.2.0",
+  "description": "DeepSeek Harness (dsh) 插件：通过 HTTP Webhook 接收三方系统的告警推送，并按配置的预设技能分派给指定会话去处理。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "lib",
+    "cordis.patch.yml",
+    "cordis.example.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:esm": "esbuild src/index.ts --bundle --platform=node --format=esm --external:@deepseek-ai/cordis --external:@deepseek-ai/dsh-session --outfile=lib/index.js"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "plugin",
+    "webhook",
+    "alert",
+    "ops"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.0-rc.7",
+    "@deepseek-ai/schemastery": "^3.18.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.0",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0"
+  }
+}

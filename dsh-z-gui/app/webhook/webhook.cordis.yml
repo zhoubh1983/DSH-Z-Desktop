@@ -1,0 +1,16 @@
+# dsh-gui 内置的 dsh-webhook-plugin 启用补丁（以 --patch overlay 形式注入 web profile）。
+# 插件包由 dsh-gui 启动时自动安装到 $DSH_HOME/profiles/web/node_modules/，这里仅按包名引用。
+- insert:
+    - id: dsh-webhook
+      name: dsh-webhook-plugin
+      config:
+        host: '0.0.0.0'
+        port: 8787
+        path: '/webhook'
+        sessionId: 'webhook'
+        defaultSkill: 'HandleAlert'
+        autoCreate: false
+        skills:
+          HandleAlert:
+            prompt: '收到来自系统 {system} 的告警（推送时间 {time}）。{message} 请按运维预案分析根因并给出处置建议。'
+        maxBodyBytes: 1048576

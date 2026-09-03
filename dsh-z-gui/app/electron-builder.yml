@@ -1,0 +1,62 @@
+# dsh-gui 打包配置（electron-builder）。
+# dsh-runtime（dsh CLI 构建产物 + 依赖 + 内置 webhook 资源）以 extraResources 形式
+# 放到真实文件系统 resources/dsh-runtime：RUN_AS_NODE 子进程不支持 asar 补丁，
+# 后端必须从真实文件系统读取代码与插件。
+appId: com.dsh.gui
+productName: DSH Desktop
+# 打包后补齐 dsh-runtime 的 node_modules（electron-builder 会排除 extraResources
+# 根目录下的 node_modules，见 scripts/after-pack.js）
+afterPack: ./scripts/after-pack.js
+directories:
+  output: release
+  buildResources: resources
+files:
+  - main/**/*
+  - preload/**/*
+  - package.json
+extraResources:
+  - from: dsh-runtime
+    to: dsh-runtime
+    filter:
+      - "**/*"
+      - "!**/*.map"
+      - "!**/.dsh-build/**"
+  - from: builtin-plugins
+    to: builtin-plugins
+    filter:
+      - "**/*"
+  - from: skills-market
+    to: skills-market
+    filter:
+      - "**/*"
+win:
+  target:
+    - nsis
+    - portable
+  # portable 绿色版独立命名（nsis 在下方单独命名，避免同名覆盖）
+  artifactName: dsh-gui-${version}-win-x64-portable.${ext}
+  # 应用图标（多尺寸 ICO，exe/任务栏/桌面快捷方式/安装器共用；源素材 app-icon.png）
+  icon: resources/icon.ico
+  # 无证书环境：仅跳过 signtool 签名（signExecutable: false），保留 rcedit
+  # 资源编辑，使新图标/版本信息嵌入 exe（桌面快捷方式与任务栏显示自定义图标）。
+  # 注意不要设 signAndEditExecutable: false——那会连资源编辑一起跳过，
+  # exe 将退回默认 Electron 图标。
+  signExecutable: false
+nsis:
+  artifactName: dsh-gui-${version}-win-x64-setup.${ext}
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  # 自定义安装逻辑：检测并自动安装外部必需环境（VC++ 2015-2022 Redistributable x64）
+  include: resources/installer.nsh
+linux:
+  target:
+    - AppImage
+    - deb
+  artifactName: dsh-gui-${version}-linux-x64.${ext}
+  category: Development
+  maintainer: dsh
+# 使用本地已下载的 Electron 二进制打包，避免 electron-builder 再次下载写系统缓存
+electronDist: node_modules/electron/dist
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/
