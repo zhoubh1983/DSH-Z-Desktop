@@ -81,6 +81,7 @@ const BUILTIN_PLUGINS = [
   'dsh-memory-plugin',
   'dsh-skill-market',
   'dsh-chrome-control',
+  'dsh-conversation-tools',
 ]
 
 /**
