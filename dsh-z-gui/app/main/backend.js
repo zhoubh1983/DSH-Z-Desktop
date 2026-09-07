@@ -82,6 +82,7 @@ const BUILTIN_PLUGINS = [
   'dsh-skill-market',
   'dsh-chrome-control',
   'dsh-conversation-tools',
+  'dsh-browser-control',
 ]
 
 /**
@@ -268,7 +269,7 @@ function ensureBuiltinSkillsMarket() {
 }
 
 /** 启动 dsh web 后端子进程，返回 { url, port }。 */
-async function startBackend() {
+async function startBackend(bridgeUrl = '') {
   const dshRuntime = resolveDshRuntime()
   const dshBin = resolveDshBin(dshRuntime)
   if (!fs.existsSync(dshBin)) {
@@ -291,7 +292,12 @@ async function startBackend() {
   ]
 
   const spawnOnce = () => spawn(process.execPath, args, {
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      // 内嵌浏览器桥端点（主进程 MCP server），供 dsh-browser-control 插件连接。
+      ...(bridgeUrl ? { DSH_BROWSER_BRIDGE_URL: bridgeUrl } : {}),
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })

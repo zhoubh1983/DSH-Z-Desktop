@@ -4,7 +4,7 @@
  * @module dsh-gui/preload
  */
 
-const { contextBridge } = require('electron')
+const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('dshGui', {
   versions: {
@@ -13,4 +13,9 @@ contextBridge.exposeInMainWorld('dshGui', {
     chrome: process.versions.chrome,
   },
   platform: process.platform,
+  // 内嵌浏览器右侧面板（主进程 browser-bridge）：显隐切换 + 三分页标签切换。
+  browser: {
+    toggle: () => ipcRenderer.send('browser:toggle'),
+    showTab: (id) => ipcRenderer.send('browser:showtab', id),
+  },
 })

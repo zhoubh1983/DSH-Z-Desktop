@@ -179,4 +179,20 @@ dsh-d/                          # 仓库根（git 根）
 
 ---
 
+## 9. 浏览器集成版（分支 `feat/browser-integration`）
+
+> 在私有仓库开启独立分支专供浏览器集成开发（main 保持既有发行线）。本段为 MVP 现状与架构。
+
+- 目标：像 trae 一样——GUI 内嵌一个浏览器窗格（Dock），对话 agent 按对话在其中导航/点击/输入/截图/读快照，用户实时看页面。
+- 架构：`主进程(WebContentsView) ←MCP(streamable-http)→ @deepseek-ai/dsh-mcp-client → agent(mcp__browser__*)`，前端开关走 preload+IPC。
+  - 拥有者：`dsh-z-gui/app/main/browser-bridge.js`（New）——持有一个 `WebContentsView` 叠加窗口右侧（宽 420，resize 同步），9 个动作原语（navigate/back/forward/reload/click/type/snapshot/screenshot/show），并当其 MCP **server**（`/mcp`，用官方 `@modelcontextprotocol/sdk` 服务端）。
+  - 注入：`main/index.js` 启动时 `startBrowserBridge()`，把端点 URL 传给 `startBackend(bridgeUrl)`；`main/backend.js` spawn env 加 `DSH_BROWSER_BRIDGE_URL`，`BUILTIN_PLUGINS` 增加 `dsh-browser-control`。
+  - 接入：内置插件 `dsh-browser-control`（`plugins/` + `builtin-plugins/`）server 端 `process.env.DSH_BROWSER_BRIDGE_URL` → `ctx.plugin(McpClient,{transport:'streamable-http',serverName:'browser',url,failOnStartupError:false})` → 工具 `mcp__browser__*`；`lib/client.js` 注入右上角「🌐 浏览器」开关按钮（调 `window.dshGui.browser.toggle`）。
+  - preload：`dsh-z-gui/app/preload/index.js` 由只暴露 versions 扩为 `dshGui.browser.toggle`（ipcRenderer→主进程 `ipcMain.on('browser:toggle')`）。
+- 关键依赖：主进程新增 `@modelcontextprotocol/sdk`（装于 `dsh-z-gui/app/node_modules`，打包自动进 asar，无需 extraResources）。
+- 取舍：dsh 对话渲染未内置 data-URI 图，MVP 不在对话气泡内嵌截图；agent 的 `screenshot` 返回本地 PNG 路径 + dataUrl，用户实时看的是 Dock；「对话内嵌图片」列为 P1。
+- 验证方式：起 dev Electron → 日志见 `browser bridge MCP ready: http://127.0.0.1:<port>/mcp`；`curl -X POST http://127.0.0.1:<port>/mcp`（MCP JSON-RPC initialize/tools/list/tools/call）定位工具；前端点「浏览器」按钮显隐；让 agent 调用 `mcp__browser__navigate` 等观察 Dock。
+- 注意：`@modelcontextprotocol/sdk` 主进程用动态 import（main 是 CommonJS）；MCP 端点需两端同用 SDK 协议（勿改为普通 REST，dsh-mcp-client 用的是 SDK StreamableHTTPClientTransport）。
+
 *交接日期：2026-09-04。原交接账号：zhoubh1983（GitHub）。如遇本文件未覆盖的问题，先查 `~/.dsh/` 与 `dsh-gui.log`，再查 `docs/`。*
+> 已升级为三标签右侧面板（浏览器/资源管理器/文件预览，全 native WebContentsView，桥增加 /panel /fs /action /ws 路由，显示 IPC browser:showtab）。

@@ -4,10 +4,11 @@
  */
 
 const path = require('node:path')
-const { app, dialog, Menu } = require('electron')
+const { app, dialog, Menu, ipcMain } = require('electron')
 const { startBackend, stopBackend } = require('./backend')
 const { createWindow, focusWindow, getWindow, consumeRecentAbnormal } = require('./window')
 const { resolveDshHome } = require('./paths')
+const browser = require('./browser-bridge')
 
 // 应用数据（缓存/日志等）统一放到 $DSH_HOME/gui，与 dsh 用户数据集中管理。
 app.setPath('userData', path.join(resolveDshHome(), 'gui'))
@@ -51,11 +52,34 @@ if (!app.requestSingleInstanceLock()) {
             { label: '退出 DSH Desktop', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() },
           ],
         },
+        {
+          label: '视图',
+          submenu: [
+            { label: '浏览器面板', accelerator: 'CmdOrCtrl+Shift+B', click: () => browser.toggleVisible() },
+          ],
+        },
       ]))
 
-      const { url } = await startBackend()
+      // 前端「浏览器」显示 IPC（面板显隐）与「三分页标签」切换 IPC → 主进程面板。
+      ipcMain.on('browser:toggle', () => browser.toggleVisible())
+      ipcMain.on('browser:showtab', (_e, id) => browser.showTab(String(id || 'browser')))
+
+      // 启动内嵌浏览器桥（MCP server），再把其端点地址传给 dsh 后端注入 env，
+      // 供 dsh-browser-control 插件用 McpClient(streamable-http) 连接，注册 mcp__browser__*。
+      let bridgeUrl = ''
+      try {
+        bridgeUrl = (await browser.startBrowserBridge()).url
+      } catch (bridgeError) {
+        console.error('[dsh-gui] 启动浏览器桥失败:', bridgeError)
+      }
+
+      const { url } = await startBackend(bridgeUrl)
       appUrl = url
-      createWindow(url)
+      // 告诉浏览器桥后端 base URL，供其 /ws 路由拉工作区列表。
+      browser.setBackendUrl(url)
+      const win = createWindow(url)
+      win.on('resize', () => browser.layoutPanel())
+      win.on('closed', () => browser.layoutPanel())
     } catch (error) {
       console.error('[dsh-gui] 启动失败:', error)
       dialog.showErrorBox(
@@ -78,6 +102,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', () => {
     stopBackend()
+    browser.disposeBrowserBridge()
   })
 
   app.on('activate', () => {
