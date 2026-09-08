@@ -226,3 +226,48 @@ cd dsh-z-gui/app && npx electron-builder --win --x64
 
 *交接日期：2026-09-04。原交接账号：zhoubh1983（GitHub）。如遇本文件未覆盖的问题，先查 `~/.dsh/` 与 `dsh-gui.log`，再查 `docs/`。*
 > 已升级为三标签右侧面板（浏览器/资源管理器/文件预览，全 native WebContentsView，桥增加 /panel /fs /action /ws 路由，显示 IPC browser:showtab）。
+
+---
+
+## 10. 本次会话交接（2026-09：模型配置修复 + dsh 升级治理）
+
+> 交接日期：2026-09-08。分支 `feat/browser-integration`。供后续 AI/开发者快速了解最近的模型配置修复与 dsh 升级体系。
+
+### 10.1 模型配置页面（Models 设置页）两个 bug 及修复
+DSH 的「模型配置」页实为 harness 的 `ui-settings-models` 包（前端 React + 后端 `llm-deepseek` 适配器），`dsh-runtime` 闭包就是从这个 `deepseek-harness` 源码 build 出来的，**改动会进安装包**。
+
+Bug 1「填 key 显示绿灯但运行时 "API key is invalid"」根因是 **ref 错位**：
+- 编辑器 `ProviderEditor.refFor()` 在 deepseek 整节 profile 无 `apiKeyEnv` 时，用 `deriveKeyRef('deepseek-official')` = `DEEPSEEK_OFFICIAL_API_KEY` 存 key；
+- 但 deepseek 运行时 `llm-deepseek/src/index.ts` 的 `resolveAdapterOptions`/`resolveApiKey` 默认读 `DEEPSEEK_API_KEY`（profile 没写 `apiKeyEnv` 就永远用它）。
+- 两者不一致 → UI 存的 key 落在运行时永远不读的 ref 上 → 会话失败。
+- 绿点语义：`credentials-local` 的 `describe()` 只看该 ref 下是否有非空值（`configured`），**不校验正确性**。
+
+修复（补丁 `patch/dsh/0001`）：
+- `ProviderEditor.applyOnce` 的 guard 从 `layout === 'pi-ai'` 扩为 `(pi-ai || deepseek)`，使 deepseek 保存时也写 `apiKeyEnv`（profile 自描述，ref 对齐运行时）。
+- `apply()` 保存成功后对 deepseek 调 `operations.discoverModels` 真实验证 key+baseURL；失败则卡片停留 + 红灯 + 错误信息（不回撤已存 settings/credential），成功才 `onClose(true)`。
+- 后端：新增 `llm/src/discovery.ts`（共享 OpenAI-compatible `GET /models` wire 列表，401/403→`INVALID_CREDENTIAL_CODE`）+ `llm-deepseek/src/discovery.ts`（`probeDeepSeek`，无 catalog 短路）+ 注册 `registerModelDiscovery(NS, …)`。
+
+Bug 2「再次编辑不反向加载」：
+- **key 从不回显是写保护设计**（非 bug），占位显示「已配置/请输入新值」。
+- baseURL 实际会从 user 层回填，只是藏在折叠的「自定义设置」`<details>` 里，用户没看到（非 bug）。
+
+### 10.2 dsh 升级治理（快照+补丁批，harness 已移出 git）
+> 详见 4.4。要点：`deepseek-harness/` **已在 git `.gitignore`（不在仓库）**，升级/接入全靠两个脚本 + patches。
+
+- **升级**：`node scripts/update-dsh.mjs [新tag]`（codeload 下载官方 zip → **Python zipfile 解压** → 覆盖 harness → 自动跑 apply-dsh-patches）。默认 tag = `dsh-v<deepseek-harness/package.json version>`。
+- **补丁**：`node scripts/apply-dsh-patches.mjs`（幂等；已应用→跳过、未应用→apply、冲突→非零退出停表）。4 个补丁在 `patches/dsh/`：
+  1. `0001` 模型配置 ref+验证（10.1）
+  2. `0002` 目录选择器 `koffi.decode.string16`（官方至今未修，升级必被覆盖）
+  3. `0003` 设置页自定义导航图标（dafeiyu/webhook/memory/skill-market）
+  4. `0004` credentials-local 凭据文档损坏容错降级
+- **新 clone 必须先跑 `update-dsh.mjs` 拉 v0.1.2-rc.1 快照才能构建/打包**（harness 不在 git）。
+
+### 10.3 本次踩坑（后续接手必看）
+- `git apply` 在**无 `.git` 的目录**会「Skipped patch」并**静默 exit 0**（什么都没改）。`apply-dsh-patches.mjs` 已内置「harness 缺 `.git` 先 `git init`」守卫。若看到 "✓ applied" 但文件没变 → 先查 harness 是否是 git repo。
+- Windows `bsdtar` 不能解压含 `.claude/`/`.agents/` 等**点目录**的 zip（报 `Invalid argument`），必须用 **Python `zipfile`**（`update-dsh.mjs` 已用 python 解压）。
+- 补丁升级后若官方改同名文件/API（如 v0.1.1→v0.1.2 把 `api.settings.mutate` 改为 `operations.writeSettings`），补丁冲突是**预期现象**——需按新 base 重新生成补丁，而非硬改 apply 脚本。
+- 新增本地定制时，把 harness 改动固化为 `patches/dsh/000N-*.patch`（diff 基准 = 官方 clean 版，路径前缀 `packages/...`），并在 `apply-dsh-patches.mjs` 的 `PATCHES` 数组加一条。
+
+### 10.4 当前状态
+- `deepseek-harness` 版本：`v0.1.2-rc.1`（含 4 补丁），**已从 git 移除跟踪**。
+- 分支 `feat/browser-integration` 与远程同步（最新 `62f9122`）。
