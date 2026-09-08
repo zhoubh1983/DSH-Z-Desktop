@@ -46,6 +46,20 @@ const PATCHES = [
     patch: join(ROOT, 'patches/dsh/0001-fix-models-align-deepseek-key-ref-validate-key-at-sa.patch'),
     args: ['-p2'],
   },
+  {
+    name: 'ui-settings-general: add custom model provider nav icons (dafeiyu/webhook/memory/skill-market)',
+    file: join(HARNESS, 'packages/client/ui-settings-general/src/client/SettingsRoot.tsx'),
+    applied: "id === 'dsh-skill-market'",
+    patch: join(ROOT, 'patches/dsh/0003-add-custom-model-nav-icons.patch'),
+    args: ['-p1'],
+  },
+  {
+    name: 'credentials-local: tolerate an unreadable credentials document at boot (self-heal)',
+    file: join(HARNESS, 'packages/credentials/credentials-local/src/index.ts'),
+    applied: "ignoring unreadable %s at boot",
+    patch: join(ROOT, 'patches/dsh/0004-credentials-local-tolerate-corrupt-doc.patch'),
+    args: ['-p1'],
+  },
 ]
 
 function state(patch) {

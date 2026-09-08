@@ -33,7 +33,7 @@ index 4cc6091..cd2e07f 100644
 +    // the profile self-describing, so the host resolves the exact key this page
 +    // stored instead of coincidentally matching its own default env name. A
 +    // profile still without `apiKeyEnv` keeps its provider-native auth path
-+    // (e.g. `export DEEPSEEK_API_KEY=…`) untouched.
++    // (e.g. `export DEEPSEEK_API_KEY=?`) untouched.
 +    const next = (layout === 'pi-ai' || layout === 'deepseek')
 +      && stringAt(draft, 'apiKeyEnv') === undefined
        && stringAt(fallback, 'apiKeyEnv') === undefined && keyValue.length > 0
@@ -104,7 +104,7 @@ index 0000000..a41d3d1
 + * @param resolveBaseURL - the profile's effective endpoint, used when the draft
 + *   carries none (an already-configured route revalidates its stored URL).
 + * @param storedApiKey - the credential the configured route already resolves,
-+ *   asked for only when the draft carries none. `undefined` — not a throw — is
++ *   asked for only when the draft carries none. `undefined` ? not a throw ? is
 + *   how "no key stored" is reported, so the probe stays unauthenticated.
 + * @returns the advertised models in endpoint order.
 + * @throws LlmError from the shared helper: `INVALID_CREDENTIAL_CODE` on a
@@ -155,7 +155,7 @@ index 3af0236..42f5fa9 100644
 +   * The credential this profile already resolves, for an interrogation whose
 +   * draft carries no key. `resolveApiKey` throws `MISSING_CREDENTIAL` when
 +   * nothing is stored anywhere; a probe reports that as "no key yet" (`undefined`)
-+   * rather than failing — the saved-card revalidation path drives with the
++   * rather than failing ? the saved-card revalidation path drives with the
 +   * form's own key first, so the only time this runs is a blank-key resave.
 +   */
 +  const storedApiKeyForProfile = async (): Promise<string | undefined> => {
@@ -201,7 +201,7 @@ index 014c9c2..6106c76 100644
 -/**
 - * Endpoint replies larger than this are refused. The endpoint is whatever URL
 - * the user typed, so the ceiling holds on the bytes actually read rather than
-- * on the length the server claims — the same two-stage shape `dsh-web-fetch`
+- * on the length the server claims ? the same two-stage shape `dsh-web-fetch`
 - * uses for its own caller-supplied URLs, except that a truncated model listing
 - * is not parseable, so overflow rejects instead of truncating.
 - */
@@ -322,7 +322,7 @@ index 014c9c2..6106c76 100644
 -/**
 - * Accept one probe key, or refuse it before the header is built. Without this
 - * the `fetch` below would throw a ByteString `TypeError` that this function's
-- * catch reports as `could not reach <url>` — blaming the network for a local,
+- * catch reports as `could not reach <url>` ? blaming the network for a local,
 - * deterministic fault.
 - * @param raw - the key typed into the form or read from storage.
 - * @returns the trimmed, usable key.
@@ -411,7 +411,7 @@ index 0000000..157584a
 + * Shared OpenAI-compatible model-listing interrogation for configuration
 + * surfaces. Adapter families that speak OpenAI's `GET /models` shape with
 + * bearer auth can validate and discover a drafted endpoint through this single
-+ * wire path — the harness must read one listing shape, not one per adapter.
++ * wire path ? the harness must read one listing shape, not one per adapter.
 + *
 + * This is deliberately protocol-shipping, not catalog knowledge: nothing here
 + * is stored. The requester carries a draft the user is still editing; the reply
@@ -430,7 +430,7 @@ index 0000000..157584a
 +/**
 + * Endpoint replies larger than this are refused. The endpoint is whatever URL
 + * the user typed, so the ceiling holds on the bytes actually read rather than
-+ * on the length the server claims — the same two-stage shape that guards every
++ * on the length the server claims ? the same two-stage shape that guards every
 + * caller-supplied URL, except that a truncated model listing is not parseable,
 + * so overflow rejects instead of truncating.
 + */
@@ -551,7 +551,7 @@ index 0000000..157584a
 +/**
 + * Accept one probe key, or refuse it before the header is built. Without this
 + * the `fetch` below would throw a ByteString `TypeError` that its callers'
-+ * catch reports as a network failure — blaming the transport for a local,
++ * catch reports as a network failure ? blaming the transport for a local,
 + * deterministic fault.
 + * @param raw - the key typed into the form or read from storage.
 + * @returns the trimmed, usable key.

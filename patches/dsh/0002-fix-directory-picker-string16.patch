@@ -1,4 +1,4 @@
-﻿diff --git a/packages/host/directory-picker-native/src/win32-dialog-bindings.ts b/packages/host/directory-picker-native/src/win32-dialog-bindings.ts
+diff --git a/packages/host/directory-picker-native/src/win32-dialog-bindings.ts b/packages/host/directory-picker-native/src/win32-dialog-bindings.ts
 index 654bbc5..d9ed273 100644
 --- a/packages/host/directory-picker-native/src/win32-dialog-bindings.ts
 +++ b/packages/host/directory-picker-native/src/win32-dialog-bindings.ts
@@ -20,13 +20,13 @@ index 654bbc5..d9ed273 100644
  /**
   * Read a NUL-terminated UTF-16 string at a native address. koffi's
 - * `_Out_ void **` out-params surface a raw address, and
-- * `koffi.decode(addr, 'str16')` would dereference it as a pointer — crash
-- * on real Windows — so view the memory directly instead.
+- * `koffi.decode(addr, 'str16')` would dereference it as a pointer ? crash
+- * on real Windows ? so view the memory directly instead.
 + * `_Out_ void **` out-params surface the string's raw address as a value;
 + * `koffi.decode.string16(addr)` reads it safely (NUL-terminated UTF-16,
 + * official documented API).
 + *
-+ * NOTE: do NOT use `koffi.decode(addr, 'str16')` here — koffi 3.1.6 crashes
++ * NOTE: do NOT use `koffi.decode(addr, 'str16')` here ? koffi 3.1.6 crashes
 + * on it even for VALID NUL-terminated buffers (plain node exits 0xC0000005
 + * access violation; Electron RUN_AS_NODE exits 0xFFFF7003 V8 heap crash,
 + * observed as "win32 folder dialog worker exited before reporting a result
