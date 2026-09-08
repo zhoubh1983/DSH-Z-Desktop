@@ -1,4 +1,3 @@
-import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
 import z from "schemastery";
 import * as mcpClient from "@deepseek-ai/dsh-mcp-client";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -803,20 +802,21 @@ var SkillsManager = class {
 //#region src/index.ts
 /** Stable cordis plugin name. */
 const name = "skills-mcp-manager";
-/** Services required before the surfaces can mount. `settings` is
-* deliberately absent: installSettingsSection registers it on an inner scoped
-* fiber, so a deployment without the settings surface still gets routes + MCP. */
+/** Services required before the surfaces can mount. `settings` is a global
+* Service in the v0.1.2 harness and must be declared here for `ctx.settings`
+* to be reachable. */
 const inject = [
 	"webServer",
 	"tools",
-	"systemPrompt"
+	"systemPrompt",
+	"settings"
 ];
 /**
 * Settings namespace this plugin's config lives under. Spelled here rather
 * than imported: the browser half spells the same value and must not depend
 * on a Host package.
 */
-const SKILLS_MCP_NAMESPACE = settingsNamespace("skills-mcp-manager");
+const SKILLS_MCP_NAMESPACE = "skills-mcp-manager";
 const Config = z.object({
 	enabled: z.boolean().default(true),
 	announceToAgent: z.boolean().default(true)
@@ -873,12 +873,13 @@ function apply(ctx, config) {
 		}, "skills-mcp-manager: routes");
 		mcp.reload();
 	};
-	installSettingsSection(ctx, SKILLS_MCP_NAMESPACE, Config, config ?? {}, {
-		setSource: (source) => {
-			current = source;
-			sync();
-		},
-		onChange: sync
+	// v0.1.2 harness: `installSettingsSection` was removed from @deepseek-ai/dsh-settings;
+	// namespace schema registration now goes through the global `ctx.settings.register`,
+	// and the resolved value + change observation come from the returned scope.
+	const scope = ctx.settings.register(SKILLS_MCP_NAMESPACE, Config, {});
+	current = () => scope.get();
+	scope.watch(() => {
+		sync();
 	});
 	ctx.effect(() => () => {
 		mcp.dispose();
