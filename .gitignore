@@ -30,9 +30,7 @@ tmp/
 credentials.yaml
 .credentials.yaml
 
-# ---- 大体积 ML 模型权重（不进 git；如需版本化改用 Git LFS）----
-**/models/**/*.onnx
-**/models/**/*.bin
+# ---- 大体积 ML 模型权重：已纳入 Git LFS（见 .gitattributes）----
 
 # ---- 独立维护的插件仓库（各有 upstream，不在主仓库版本控制）----
 plugins/dsh-dafeiyu/
