@@ -271,3 +271,55 @@ Bug 2「再次编辑不反向加载」：
 ### 10.4 当前状态
 - `deepseek-harness` 版本：`v0.1.2-rc.1`（含 4 补丁），**已从 git 移除跟踪**。
 - 分支 `feat/browser-integration` 与远程同步（最新 `62f9122`）。
+
+---
+
+## 11. 本次会话交接（2026-09：dsh-runtime 闭包升级到 v0.1.2-rc.1 + 重新打包）
+
+> 交接日期：2026-09-08。分支 `feat/browser-integration`。**重要**：此前打包产物（setup/portable）一直跑的是 **v0.1.1-rc.2** 闭包——4 个补丁（模型 ref+验证、picker string16、导航图标、credentials 容错）**此前从未真正进包**。本轮完成闭包重建并重新打包。
+
+### 11.1 dsh-runtime 闭包重建完整流程（关键，旧 4.2 流程缺 build 步骤）
+deploy 前**必须先 build harness 源码**，否则 workspace 包复制进闭包是空壳（主包无 bin、无 lib）。完整流程：
+
+```bash
+cd deepseek-harness
+pnpm install --config.strictDepBuilds=false              # 装 dev 工具（tsx/tsdown/typescript）
+node .tools/node-v24.20.0-win-x64/node.exe node_modules/typescript/bin/tsc -b tsconfig.host.json
+node .tools/node-v24.20.0-win-x64/node.exe node_modules/tsdown/dist/run.mjs --env.DSH_BUILD_FACE host
+node .tools/node-v24.20.0-win-x64/node.exe --max-old-space-size=4096 node_modules/typescript/bin/tsc -b tsconfig.client.json
+node .tools/node-v24.20.0-win-x64/node.exe node_modules/tsdown/dist/run.mjs --env.DSH_BUILD_FACE client
+cd apps/web && node ..\..\node_modules\vite\bin\vite.js build       # web-frontend dist
+cd ../.. && pnpm --config.verify-deps-before-run=false --filter @deepseek-ai/dsh deploy <dsh-runtime> --prod --legacy --ignore-scripts --config.node-linker=hoisted
+python dsh-z-gui/scripts/ensure-portable-closure.py .
+# ⚠️ 闭包内残留 junction 必须实体化：遍历 dsh-runtime/node_modules 找 LinkType=Junction 的目录，
+#   用 [System.IO.Directory]::Delete($path,$false) 删链接（PowerShell Remove-Item 删 junction 会失败）再 Copy-Item 实体复制
+```
+
+**铁律：全部构建步骤用项目自带 Node 24**（`.tools/node-v24.20.0-win-x64/node.exe`）。系统 node v22 的 `globSync`（experimental）会让 tsdown workspace 扫描报 `no packages/*/*/package.json declares the name @deepseek-ai/dsh-api-remotes`；系统 node v22 还缺 `createZstdDecompress` 无法起 dsh web。
+
+### 11.2 补丁 0001 类型修复（已同步进补丁文件）
+`patches/dsh/0001` 的 `llm/src/discovery.ts` 引用了 `./error.ts` 不存在的 `LlmError`（真身在 `src/index.ts`：`export class LlmError extends HarnessError`）且 `probeDeepSeek` 传了 `LlmModelDiscoveryRequest` 没有的 `signal` 字段 → **编译不过**。修复：
+- `import { LlmError } from './error.ts'` → `import { HarnessError } from './error.ts'`（构造签名 `(message, code, options?)` 一致，功能等效；调用方 ProviderEditor 只读 `error.message` 不依赖 instanceof）
+- 删除 `...request.signal === undefined ? {} : { signal: request.signal },`
+- **补丁文件本身必须同步修复**（已在 2026-09-08 提交 dc995ee），否则下次 `update-dsh.mjs` 重打补丁即编译失败。
+
+### 11.3 沙箱/pnpm 环境坑（本轮实测）
+- `pnpm install` 在后台 job 会卡死：stdout 管道未被及时消费阻塞 pnpm + 并发 install 互相破坏 node_modules。**终极绕过**：手动建 workspace junction（`node_modules/@deepseek-ai/*` → 源码目录，Node `symlinkSync(target, path, 'junction')`）+ 从 `.pnpm`/store/`npm pack` 补齐缺失包（tsdown 可选 peer `unrun`、残缺 `shiki` 主包、rolldown binding 1.0.3→1.1.1 错版）+ 删除 `packages/*/*/node_modules` 空壳（hoisted 布局不需要本地 node_modules）。
+- 打包沙箱间歇失败 `__uninstaller.exe failed opening file`（makensis macroline 91）：清理 `release` 中间产物（win-unpacked/.nsis.7z/__uninstaller/blockmap）重试即成功。
+- dsh-runtime 的 `config/agent-presets` 在 v0.1.2 被官方移除（结构变化，deploy 产物为准，属正常）。
+
+### 11.4 本轮交付
+- **Git LFS**：`.gitattributes` 路由 `*.onnx`/`*.bin`；`dsh-memory-plugin/models/bge-small-zh-v1.5/onnx/` 2 个模型（90.5MB+22.9MB）入库（提交 a39bd7f / 43a4bef）。
+- **dsh-runtime 升级**：闭包 v0.1.2-rc.1 + 4 补丁全入包 + web-frontend dist（提交 dc995ee）。
+- **产物**：`release/dsh-gui-0.1.0-win-x64-setup.exe`（328.4MB）+ `portable.exe`（303.8MB），2026-09-08 16:29 生成。闭包内验证：版本 0.1.2-rc.1、picker `string16` ✓、models `pi-ai || deepseek` guard ✓、settings 图标 ✓、credentials 容错 ✓、0 残留 junction；`dsh-runtime/node_modules/@deepseek-ai/dsh/bin/dsh --version` 输出 `0.1.2-rc.1`。
+- 推送：`feat/browser-integration` 已同步（含 3 个提交；GitHub 443 间歇断连，重试即成功）。
+
+### 11.5 第三方插件适配：@zebbkira/dsh-skills-mcp-manager（v0.1.2 settings API）
+**v0.1.2 的 `@deepseek-ai/dsh-settings` 删除了 `installSettingsSection`/`settingsNamespace` 导出**（v0.1.x UI 设置注册 API），改由全局 `SettingsProvider.register(ns, schema, options)`（返回 `SettingsScope`：`get()`/`watch()`/`update()`/`replace()`）承担。**内置第三方插件 @zebbkira/dsh-skills-mcp-manager（npm 最新 0.2.0 仍是旧 API）升级后插件树加载失败 → dsh web 后端退出 code=1**（报错：`does not provide an export named 'installSettingsSection'`）。
+适配（改 `builtin-plugins/@zebbkira/dsh-skills-mcp-manager/lib/index.js`，提交 4803e14）：
+- 删 `import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings"`
+- `settingsNamespace("skills-mcp-manager")` → 字面量 `"skills-mcp-manager"`（其实现就是返回原字符串）
+- `installSettingsSection(ctx, ns, Config, cfg, {setSource, onChange})` → `const scope = ctx.settings.register(ns, Config, {}); current = () => scope.get(); scope.watch(() => sync())`
+- **必须把 `settings` 加入插件 `inject` 数组**（cordis 属性代理：未声明 inject 的服务访问 `ctx.settings` 抛「cannot get property without inject」）
+- 同步 profile 副本 + **重新打包**（win-unpacked/setup/portable 的 builtin-plugins 是打包时复制的旧版，不改装包即崩）
+- 冒烟验证（win-unpacked 实机）：dsh web 启动（日志 `dsh web: http://127.0.0.1:8885/?token=...`）、webhook 8787、`/chrome/status` 200 `running:true`（chrome-control daemon 正常）。最终产物 setup 328.4MB / portable 303.8MB（17:07）。
