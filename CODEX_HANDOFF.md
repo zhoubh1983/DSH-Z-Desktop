@@ -31,11 +31,11 @@ dsh-d/                          # 仓库根（git 根）
 │       ├── electron-builder.yml# 打包配置
 │       └── release/            # 打包产物（git 已排除）
 ├── plugins/                    # 插件源码（自研：dsh-skill-market / dsh-whale-musume；独立仓库：其余）
-├── deepseek-harness/           # 上游 dsh 框架源码（含 directory-picker-native 等，改过 readUtf16）
+├── deepseek-harness/           # 上游 dsh 框架源码快照（**不在 git 中**，见 4.4；含 directory-picker-native 等，改过 readUtf16）
 ├── dsh-memory-plugin/          # 记忆插件源码（模型在 builtin 副本内，onnx 已 git 排除）
 ├── dsh-webhook-plugin/         # Webhook 插件源码（空目录，实际在 builtin-plugins）
 ├── docs/                       # 设计文档（dsh-memory-design.md 等）
-└── .gitignore                  # 已排除 node_modules/release/.tools/onnx/独立插件仓库
+└── .gitignore                  # 已排除 node_modules/release/.tools/onnx/独立插件仓库/deepseek-harness快照
 ```
 
 ---
@@ -109,6 +109,10 @@ dsh-d/                          # 仓库根（git 根）
 ## 4.4 dsh 升级流程（重要：无损同步官方 dsh）
 
 **背景**：`deepseek-harness/` 是官方 dsh 的源码快照，官方升级时需无损同步、并保住本地定制补丁。github git 主站(443)在本环境不稳定，但 codeload/raw 可达，因此采用「**快照 + 补丁批**」方案（**不**用 git submodule）。
+
+> **⚠️ harness 已从 git 跟踪移除（2026-09，提交 e6281e7）**：`.gitignore` 含 `/deepseek-harness/`，仓库不再承载 harness 的 7900 个文件（避免每次升级产生 6000 文件巨 diff）。`deepseek-harness/` 只是磁盘上的本地快照，**不在 git 里**。
+> **当前版本**：`v0.1.2-rc.1`。
+> **关键影响**：**新 clone 仓库后，必须先本地跑一次 `node scripts/update-dsh.mjs` 拉取快照，才能构建/打包**。升级 harness 同理走该脚本。
 
 **两个脚本**（仓库根 `scripts/`）：
 - `apply-dsh-patches.mjs`：幂等地把本地定制补丁应用到 `deepseek-harness/`。检测目标文件是否已含补丁效果（已应用→跳过；未应用→apply；冲突→非零退出停表）。**含 4 个补丁**：
