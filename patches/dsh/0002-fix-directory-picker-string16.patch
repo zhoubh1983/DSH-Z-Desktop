@@ -1,0 +1,54 @@
+﻿diff --git a/packages/host/directory-picker-native/src/win32-dialog-bindings.ts b/packages/host/directory-picker-native/src/win32-dialog-bindings.ts
+index 654bbc5..d9ed273 100644
+--- a/packages/host/directory-picker-native/src/win32-dialog-bindings.ts
++++ b/packages/host/directory-picker-native/src/win32-dialog-bindings.ts
+@@ -21,7 +21,11 @@ interface Koffi {
+   proto(declaration: string): unknown
+   pointer(type: unknown): unknown
+   call(pointer: unknown, proto: unknown, ...args: unknown[]): unknown
+-  decode(value: unknown, offsetOrType: unknown, type?: unknown): unknown
++  decode: {
++    (value: unknown, offsetOrType: unknown, type?: unknown): unknown
++    string16(value: unknown): unknown
++    string16(value: unknown, length: number): unknown
++  }
+   register(fn: (...args: unknown[]) => unknown, type: unknown): unknown
+   unregister(callback: unknown): void
+   sizeof(type: string): number
+@@ -30,15 +34,29 @@ interface Koffi {
+ 
+ /**
+  * Read a NUL-terminated UTF-16 string at a native address. koffi's
+- * `_Out_ void **` out-params surface a raw address, and
+- * `koffi.decode(addr, 'str16')` would dereference it as a pointer — crash
+- * on real Windows — so view the memory directly instead.
++ * `_Out_ void **` out-params surface the string's raw address as a value;
++ * `koffi.decode.string16(addr)` reads it safely (NUL-terminated UTF-16,
++ * official documented API).
++ *
++ * NOTE: do NOT use `koffi.decode(addr, 'str16')` here — koffi 3.1.6 crashes
++ * on it even for VALID NUL-terminated buffers (plain node exits 0xC0000005
++ * access violation; Electron RUN_AS_NODE exits 0xFFFF7003 V8 heap crash,
++ * observed as "win32 folder dialog worker exited before reporting a result
++ * (exit=4294930435)" on the packaged app). `string16` decodes the same data
++ * without crashing.
++ *
++ * The even earlier `koffi.view(addr, 32768)` over-read past short strings
++ * and SIGABRTed (exit 134) when the memory after the string was unmapped.
++ * @returns the decoded string, or '' when the address is null/invalid.
+  */
+ function readUtf16(koffi: Koffi, address: unknown): string {
+-  const bytes = Buffer.from(koffi.view(address, 32768))
+-  let end = 0
+-  while (end + 1 < bytes.length && bytes[end] !== 0) end += 2
+-  return bytes.toString('utf16le', 0, end)
++  if (address == null) return ''
++  try {
++    const decoded = koffi.decode.string16(address)
++    return typeof decoded === 'string' ? decoded : ''
++  } catch {
++    return ''
++  }
+ }
+ 
+ const COINIT_APARTMENTTHREADED = 0x2
