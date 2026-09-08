@@ -86,7 +86,7 @@ index 0000000..79956d5
 + *   asked for only when the draft carries none. `undefined` — not a throw — is
 + *   how "no key stored" is reported, so the probe stays unauthenticated.
 + * @returns the advertised models in endpoint order.
-+ * @throws LlmError from the shared helper: `INVALID_CREDENTIAL_CODE` on a
++ * @throws HarnessError from the shared helper: `INVALID_CREDENTIAL_CODE` on a
 + *   401/403, `DISCOVERY_FAILED` on transport or shape failures.
 + */
 +export async function probeDeepSeek(
@@ -102,7 +102,6 @@ index 0000000..79956d5
 +  return listOpenAiCompatibleModels({
 +    baseURL,
 +    ...apiKey === undefined ? {} : { apiKey },
-+    ...request.signal === undefined ? {} : { signal: request.signal },
 +  })
 +}
 diff --git a/packages/llm/llm-deepseek/src/index.ts b/packages/llm/llm-deepseek/src/index.ts
@@ -169,7 +168,7 @@ index 0000000..005c941
 + */
 +
 +import { INVALID_CREDENTIAL_CODE } from './error.ts'
-+import { LlmError } from './error.ts'
++import { HarnessError } from './error.ts'
 +import { normalizeApiKey } from './api-key.ts'
 +import { attributionHeaders } from './attribution.ts'
 +import type { LlmDiscoveredModel } from './types.ts'
@@ -228,8 +227,8 @@ index 0000000..005c941
 + * a server that under-declares (or streams) tells us nothing up front.
 + */
 +async function readBounded(response: Response, url: string): Promise<string> {
-+  const oversized = (): LlmError =>
-+    new LlmError(`${url} answered with more than ${MAX_RESPONSE_BYTES} bytes`, 'DISCOVERY_FAILED')
++  const oversized = (): HarnessError =>
++    new HarnessError(`${url} answered with more than ${MAX_RESPONSE_BYTES} bytes`, 'DISCOVERY_FAILED')
 +  const declared = Number(response.headers.get('content-length') ?? Number.NaN)
 +  if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
 +    await response.body?.cancel()
@@ -272,7 +271,7 @@ index 0000000..005c941
 +function readListing(body: unknown): LlmDiscoveredModel[] {
 +  const data = (body as { data?: unknown } | null)?.data
 +  if (!Array.isArray(data)) {
-+    throw new LlmError(
++    throw new HarnessError(
 +      'the endpoint\'s model listing has no "data" array; enter this provider\'s models by hand',
 +      'DISCOVERY_FAILED',
 +    )
@@ -306,7 +305,7 @@ index 0000000..005c941
 +export function usableProbeKey(raw: string): string {
 +  const checked = normalizeApiKey(raw)
 +  if (checked.ok) return checked.value
-+  throw new LlmError(
++  throw new HarnessError(
 +    checked.reason === 'empty'
 +      ? 'this provider\'s API key is blank; enter it on the Models page, or clear it to probe unauthenticated'
 +      : 'this provider\'s API key contains characters no HTTP header can carry; paste the raw key only',
@@ -328,7 +327,7 @@ index 0000000..005c941
 + * Interrogate an OpenAI-compatible endpoint's `GET /models` listing.
 + * @param request - the endpoint and optional one-shot key.
 + * @returns the advertised models in endpoint order.
-+ * @throws LlmError `INVALID_CREDENTIAL_CODE` on a 401/403 (an auth probe
++ * @throws HarnessError `INVALID_CREDENTIAL_CODE` on a 401/403 (an auth probe
 + *   distinction the caller needs), `DISCOVERY_FAILED` on any other transport,
 + *   status, or shape failure.
 + */
@@ -349,12 +348,12 @@ index 0000000..005c941
 +    })
 +  } catch (error: unknown) {
 +    if (request.signal?.aborted) {
-+      throw new LlmError('model discovery aborted by caller', 'ABORTED', { cause: error })
++      throw new HarnessError('model discovery aborted by caller', 'ABORTED', { cause: error })
 +    }
-+    throw new LlmError(`could not reach ${url}`, 'DISCOVERY_FAILED', { cause: error })
++    throw new HarnessError(`could not reach ${url}`, 'DISCOVERY_FAILED', { cause: error })
 +  }
 +  if (!response.ok) {
-+    throw new LlmError(
++    throw new HarnessError(
 +      `${url} answered ${response.status}${response.status === 401 || response.status === 403 ? '; check the API key' : ''}`,
 +      response.status === 401 || response.status === 403 ? INVALID_CREDENTIAL_CODE : 'DISCOVERY_FAILED',
 +    )
@@ -367,7 +366,7 @@ index 0000000..005c941
 +    // may be any value; the caller gets the same coded failure it would have
 +    // for a cancellation before the request went out.
 +    if (request.signal?.aborted) {
-+      throw new LlmError('model discovery aborted by caller', 'ABORTED', { cause: error })
++      throw new HarnessError('model discovery aborted by caller', 'ABORTED', { cause: error })
 +    }
 +    throw error
 +  }
@@ -375,7 +374,7 @@ index 0000000..005c941
 +  try {
 +    body = JSON.parse(text)
 +  } catch (error: unknown) {
-+    throw new LlmError(`${url} did not answer with JSON`, 'DISCOVERY_FAILED', { cause: error })
++    throw new HarnessError(`${url} did not answer with JSON`, 'DISCOVERY_FAILED', { cause: error })
 +  }
 +  return readListing(body)
 +}
