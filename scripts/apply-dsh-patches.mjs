@@ -73,27 +73,37 @@ function state(patch) {
 
 const checkOnly = process.argv.includes('--check')
 
+function applyPatch(patch, checkOnly) {
+  // git apply requires a git repository (otherwise it "skips" the patch silently
+  // with exit 0 while changing nothing). The harness snapshot from update-dsh.mjs
+  // is a plain zip extraction with no .git, so initialize one on the first run.
+  if (!existsSync(join(HARNESS, '.git'))) {
+    execFileSync('git', ['init', '-q'], { cwd: HARNESS, stdio: 'pipe' })
+  }
+  try {
+    execFileSync('git', [
+      'apply', '--ignore-space-change', '--whitespace=nowarn', ...patch.args, patch.patch,
+    ], { cwd: HARNESS, stdio: 'pipe' })
+    console.log('  ✓ applied')
+    return true
+  } catch (error) {
+    const msg = error.stderr?.toString() ?? error.message
+    console.error(`  ✗ FAILED to apply (needs human review):\n${msg}`)
+    return false
+  }
+}
+
 let failures = 0
 for (const patch of PATCHES) {
   const applied = state(patch)
   console.log(`\n[${applied === true ? 'ALREADY' : applied === false ? 'PENDING' : '???'}] ${patch.name}`)
   if (applied === false && !checkOnly) {
-    const p = patch.patch
-    if (!existsSync(p)) {
-      console.error(`  ✗ missing patch file: ${p}`)
+    if (!existsSync(patch.patch)) {
+      console.error(`  ✗ missing patch file: ${patch.patch}`)
       failures += 1
       continue
     }
-    try {
-      execFileSync('git', [
-        'apply', '--ignore-space-change', '--whitespace=nowarn', ...patch.args, p,
-      ], { cwd: HARNESS, stdio: 'pipe' })
-      console.log('  ✓ applied')
-    } catch (error) {
-      const msg = error.stderr?.toString() ?? error.message
-      console.error(`  ✗ FAILED to apply (needs human review):\n${msg}`)
-      failures += 1
-    }
+    if (!applyPatch(patch, checkOnly)) failures += 1
   } else if (applied === true) {
     console.log('  ✓ already applied; skipping')
   } else {

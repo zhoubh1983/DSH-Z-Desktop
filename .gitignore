@@ -39,6 +39,9 @@ plugins/dsh-dafeiyu/
 plugins/dsh-skills-mcp-manager/
 plugins/dsh-whale-musume/
 
+# ---- 上游 dsh 快照（升级用 scripts/update-dsh.mjs 拉取 + scripts/apply-dsh-patches.mjs 应用定制补丁）----
+/deepseek-harness/
+
 # ---- 系统 / 编辑器 ----
 .DS_Store
 Thumbs.db
