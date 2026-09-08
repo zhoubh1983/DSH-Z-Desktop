@@ -20,6 +20,7 @@ import { launchEnvironmentOf, type LaunchEnvironmentSnapshot } from '@deepseek-a
 import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { getOrCreateAnonymousUserId, type AnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
+import { probeDeepSeek } from './discovery.ts'
 import {
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_FILE_EXPIRY_SECONDS,
@@ -69,6 +70,7 @@ export { DeepSeekFileId } from './file-id.ts'
 export type { DeepSeekFileId as DeepSeekFileIdType } from './file-id.ts'
 export { DeepSeekUploadIndex, deepSeekFileScope } from './upload-index.ts'
 export type { DeepSeekUploadRecord } from './upload-index.ts'
+export { probeDeepSeek } from './discovery.ts'
 export type { RequestDefaults } from './serialize.ts'
 export type * from './types.ts'
 
@@ -442,6 +444,30 @@ export function apply(ctx: Context, config: Config): void {
   ctx.llm.registerConfigurableProviders([
     { provider: PROVIDER, displayName: 'DeepSeek', settingsNs: NS, settingsPath: [] },
   ])
+  /**
+   * The credential this profile already resolves, for an interrogation whose
+   * draft carries no key. `resolveApiKey` throws `MISSING_CREDENTIAL` when
+   * nothing is stored anywhere; a probe reports that as "no key yet" (`undefined`)
+   * rather than failing — the saved-card revalidation path drives with the
+   * form's own key first, so the only time this runs is a blank-key resave.
+   */
+  const storedApiKeyForProfile = async (): Promise<string | undefined> => {
+    try {
+      return await resolveApiKey(options())
+    } catch (error: unknown) {
+      if (error instanceof LlmError && error.code === 'MISSING_CREDENTIAL') return undefined
+      throw error
+    }
+  }
+  // Interrogating an endpoint validates the endpoint and the just-typed key
+  // over the wire the save is about to persist, not a static catalog, so the
+  // "configured" indicator can mean the key actually authenticated instead of
+  // merely that a value was stored under a dered reference.
+  ctx.llm.registerModelDiscovery(NS, request => probeDeepSeek(
+    request,
+    () => options().baseURL,
+    storedApiKeyForProfile,
+  ))
   // Route effects bind to this apply fiber via the stable `ctx` reference,
   // even when a swap runs inside the scoped settings callback below.
   const registration = ctx.llm.registerAdapter([PROVIDER], adapter)

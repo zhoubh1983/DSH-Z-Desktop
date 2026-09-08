@@ -247,9 +247,14 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
    */
   const applyOnce = async (): Promise<string | undefined> => {
     const ns = namespace.ns
-    // A pi-ai profile names the conventional reference only when this page is
-    // about to store a key. Otherwise the provider keeps its native auth path.
-    const next = layout === 'pi-ai' && stringAt(draft, 'apiKeyEnv') === undefined
+    // A pi-ai or deepseek profile names the conventional reference only when
+    // this page is about to store a key. Recording the derived reference makes
+    // the profile self-describing, so the host resolves the exact key this page
+    // stored instead of coincidentally matching its own default env name. A
+    // profile still without `apiKeyEnv` keeps its provider-native auth path
+    // (e.g. `export DEEPSEEK_API_KEY=…`) untouched.
+    const next = (layout === 'pi-ai' || layout === 'deepseek')
+      && stringAt(draft, 'apiKeyEnv') === undefined
       && stringAt(fallback, 'apiKeyEnv') === undefined && keyValue.length > 0
       ? schema.setPath(draft, ['apiKeyEnv'], keyRef)
       : draft
@@ -293,7 +298,6 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
       const stored = await api.credentials.set({ ref: keyRef, value: keyValue })
       if (!stored.result.ok) return stored.result.error.message
     }
-    setKeyDraft('')
     return undefined
   }
 
@@ -306,6 +310,26 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
         setFailure(failure)
         return
       }
+      // Save-time validation for the deepseek family: the "configured" state a
+      // stored key earns must mean the key actually authenticates, not merely
+      // that a value was persisted under the profile's reference. A probe that
+      // fails (unreachable endpoint, INVALID_CREDENTIAL 401/403) keeps the card
+      // open with the error so the user corrects it here rather than discovering
+      // it on the first real turn. The typed key still wins for this probe; a
+      // blank-key resave validates whatever key the profile now resolves.
+      if (layout === 'deepseek' && probeBaseURL !== undefined) {
+        const validated = await api.llm.discoverModels({
+          settingsNs: namespace.ns,
+          provider: props.provider,
+          baseURL: probeBaseURL,
+          ...keyValue.length === 0 ? {} : { apiKey: keyValue },
+        })
+        if (!validated.result.ok) {
+          setFailure(validated.result.error.message)
+          return
+        }
+      }
+      setKeyDraft('')
       props.onClose(true)
     } catch (error) {
       // A transport failure (disconnect, a request the host refuses) rejects
