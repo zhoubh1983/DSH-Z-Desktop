@@ -106,6 +106,32 @@ dsh-d/                          # 仓库根（git 根）
 
 ---
 
+## 4.4 dsh 升级流程（重要：无损同步官方 dsh）
+
+**背景**：`deepseek-harness/` 是官方 dsh 的源码快照，官方升级时需无损同步、并保住本地定制补丁。github git 主站(443)在本环境不稳定，但 codeload/raw 可达，因此采用「**快照 + 补丁批**」方案（**不**用 git submodule）。
+
+**两个脚本**（仓库根 `scripts/`）：
+- `apply-dsh-patches.mjs`：幂等地把本地定制补丁应用到 `deepseek-harness/`。检测目标文件是否已含补丁效果（已应用→跳过；未应用→apply；冲突→非零退出停表）。**含 4 个补丁**：
+  1. `patches/dsh/0001` 模型配置 ref 对齐 + 保存验证（`ui-settings-models`）
+  2. `patches/dsh/0002` 目录选择器 `koffi.decode.string16` 修复（`directory-picker-native`，官方至今未修）
+  3. `patches/dsh/0003` 设置页自定义导航图标（`ui-settings-general/SettingsRoot.tsx`）
+  4. `patches/dsh/0004` credentials-local 凭据文档损坏容错降级（`credentials-local`）
+- `update-dsh.mjs`：**升级入口**。下载官方 tag 的 codeload zip → Python zipfile 解压（Windows bsdtar 不能解 dot 目录）→ 覆盖 `deepseek-harness/` → 自动跑 `apply-dsh-patches`。
+
+**升级 SOP**：
+```bash
+# 1) 升级 harness 到指定 tag/branch（默认=dsh-v<deepseek-harness/package.json version>，也支持显式 tag）
+node scripts/update-dsh.mjs            # 或 node scripts/update-dsh.mjs dsh-v0.1.2-rc.1
+# 2) 若补丁冲突导致非零退出，人工裁决后重跑
+node scripts/apply-dsh-patches.mjs --check
+# 3) 重新生成 dsh-runtime 闭包并重新打包（见 4.2）
+pnpm --config.verify-deps-before-run=false --filter @deepseek-ai/dsh deploy <dir> --prod --legacy --ignore-scripts --config.node-linker=hoisted
+python dsh-z-gui/scripts/ensure-portable-closure.py .
+cd dsh-z-gui/app && npx electron-builder --win --x64
+```
+
+**新增本地定制时**：改 `deepseek-harness/` 后，把改动固化为 `patches/dsh/000N-*.patch`（diff 基准 = 官方 clean 版，路径前缀 `packages/...`），并在 `scripts/apply-dsh-patches.mjs` 的 `PATCHES` 数组增加条目。
+
 ## 5. 已知问题与已修复项（接手必读）
 
 ### 5.1 目录选择器（关键修复，勿回退）
