@@ -267,6 +267,7 @@ let bridgePort = 0
 let bridgeUrl = ''
 let panelBaseUrl = ''
 let backendUrl = ''
+let backendToken = '' // v0.1.2+ dsh web URL 携带的 ?token= 查询串（与 backendUrl 分离，供子路径请求附加）
 let currentTab = null // 'browser' | 'fs' | 'prev' | null（null=面板整体隐藏）
 let visible = false
 let toolbarLoaded = false
@@ -673,7 +674,7 @@ function handleRest(req, res) {
   // GET /ws：从后端拉工作区列表，透传给面板。
   if (pathname === '/ws' && method === 'GET') {
     if (!backendUrl) return sendJson(res, 200, { ok: false, error: 'backend not set' })
-    fetch(`${backendUrl}/plugins/dsh-conversation-tools/api/workspaces`)
+    fetch(`${backendUrl}/plugins/dsh-conversation-tools/api/workspaces${backendToken ? '?' + backendToken : ''}`)
       .then((r) => r.json())
       .then((data) => sendJson(res, 200, data))
       .catch((e) => sendJson(res, 200, { ok: false, error: e.message }))
@@ -763,7 +764,12 @@ function getBridgeUrl() {
 
 /** 让桥知道后端 base URL（index.js 在 startBackend 后调用），供 /ws 拉取工作区。 */
 function setBackendUrl(baseUrl) {
-  backendUrl = String(baseUrl || '').replace(/\/+$/, '')
+  const raw = String(baseUrl || '').replace(/\/+$/, '')
+  // v0.1.2+ dsh web 的 URL 带认证 token（http://host:port/?token=xxx）；拆出 base
+  // 与 query，子路径请求（如 /ws → /plugins/...）再重新附加，避免 token 被拼坏。
+  const qIndex = raw.indexOf('?')
+  backendUrl = qIndex === -1 ? raw : raw.slice(0, qIndex)
+  backendToken = qIndex === -1 ? '' : raw.slice(qIndex + 1)
 }
 
 /** 释放所有视图与 HTTP 服务（应用退出/窗口关闭时）。 */

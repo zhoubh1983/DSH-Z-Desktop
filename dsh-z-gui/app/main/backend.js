@@ -34,6 +34,8 @@ let child = null
 let stopping = false
 let restartCount = 0
 let logStream = null
+/** v0.1.2+ dsh web 输出的带 token 完整 URL（`dsh web: http://host:port/?token=...`）。 */
+let webUrl = ''
 
 /** 找到本机一个空闲端口（绑定 0 让 OS 分配后释放）。 */
 function findFreePort() {
@@ -302,13 +304,38 @@ async function startBackend(bridgeUrl = '') {
     windowsHide: true,
   })
 
-  const forward = (stream, label) => {
-    stream.on('data', (chunk) => {
-      const line = `[${label}] ${chunk.toString()}`
-      console.log(line.trimEnd())
-      if (logStream) logStream.write(line)
-    })
-  }
+  /** 等待 forward 捕获到 `dsh web:` 输出的带 token URL（HTTP 就绪可能早于该行输出到达，故竞态保护）。 */
+function waitForWebUrl(timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const deadline = Date.now() + timeoutMs
+    const check = () => {
+      if (webUrl) return resolve(webUrl)
+      if (Date.now() > deadline) return resolve('')
+      setTimeout(check, 100)
+    }
+    check()
+  })
+}
+
+/** 转发后端输出到控制台/日志，并按行解析 `dsh web:` 的带 token URL（行缓冲防 chunk 切断）。 */
+const forward = (stream, label) => {
+  let pending = ''
+  stream.on('data', (chunk) => {
+    pending += chunk.toString()
+    const lines = pending.split(/\r?\n/)
+    pending = lines.pop() || ''
+    for (const raw of lines) {
+      const text = raw.trimEnd()
+      const line = `[${label}] ${text}`
+      console.log(line)
+      if (logStream) logStream.write(line + '\n')
+      // v0.1.2+ 的 dsh web 默认带 token 认证（`dsh web: http://host:port/?token=...`）。
+      // 窗口必须加载带 token 的完整 URL，否则 401 黑屏。
+      const match = /dsh web:\s*(https?:\/\/\S+)/.exec(text)
+      if (match) webUrl = match[1].trim()
+    }
+  })
+}
 
   const boot = async () => {
     stopping = false
@@ -334,7 +361,10 @@ async function startBackend(bridgeUrl = '') {
   }
 
   await boot()
-  return { url: `http://127.0.0.1:${port}`, port }
+  // HTTP 就绪探测可能早于 `dsh web:` 输出到达（500ms 轮询 vs 输出缓冲），
+  // 再等待捕获带 token 的完整 URL；超时（后端无 token 输出）则回退裸地址。
+  const url = (await waitForWebUrl()) || `http://127.0.0.1:${port}`
+  return { url, port }
 }
 
 /** 停止后端子进程（幂等）。 */
