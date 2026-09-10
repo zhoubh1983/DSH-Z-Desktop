@@ -89,7 +89,7 @@ To read an article, use `get_text`, not `snapshot`: a snapshot describes structu
 
 Requests are only recorded from the moment the tools attached to that tab, so a request made during the very first `navigate` may be missing — reload if you need it.
 
-`dialog` answers a native `alert`, `confirm`, or `prompt` with `action: "accept"` or `"dismiss"`, passing `text` for a prompt. **An open dialog blocks every other tool on that tab** — if calls suddenly start timing out after a click, an unanswered dialog is the likeliest cause. Call it only once a dialog is actually open; it errors when there is none.
+`dialog` reports an `alert`/`confirm`/`prompt` the page raised. Native dialogs are **intercepted at the page level** (no modal, no page block): the extension records the message, `confirm` resolves to `true`, and `prompt` resolves to `null`. Call `dialog` to read what was intercepted — it returns `{type, message}` and clears the record; it errors when there is none. This is why tools never hang on dialogs.
 
 ## Submitting and special keys
 

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>DSH Chrome Control</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0;
+      width: 280px;
+      font: 14px/1.5 ui-sans-serif, system-ui, "Segoe UI", "PingFang SC", sans-serif;
+      color: #171717;
+      background: #f7f7f8;
+    }
+    body[data-theme="dark"] { color: #e5e5e5; background: #171717; }
+    .wrap { padding: 14px; }
+    h1 { font-size: 15px; margin: 0 0 12px; font-weight: 600; }
+    .field { margin-bottom: 10px; }
+    .field label { display: block; font-size: 12px; opacity: .8; margin-bottom: 4px; }
+    .field input {
+      width: 100%; box-sizing: border-box;
+      padding: 6px 8px; border: 1px solid rgba(127,127,127,.4); border-radius: 8px;
+      font-size: 13px; background: transparent; color: inherit;
+    }
+    .toggle { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .toggle input { width: 34px; height: 20px; accent-color: #4b3fe3; }
+    .status { font-size: 12px; padding: 8px 10px; border-radius: 8px; background: rgba(127,127,127,.12); }
+    .status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+    .status.on { background: rgba(29,201,129,.15); }
+    .status.on .dot { background: #1dc981; }
+    .status.off .dot { background: #e8463a; }
+    .hint { font-size: 11px; opacity: .65; margin-top: 10px; line-height: 1.5; }
+    button.save { margin-top: 6px; padding: 6px 12px; border: none; border-radius: 8px; background: #4b3fe3; color: #fff; font-size: 13px; cursor: pointer; }
+    button.save:active { opacity: .85; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>DSH Chrome Control</h1>
+    <div class="toggle">
+      <input type="checkbox" id="toggle">
+      <label for="toggle">Allow agent control</label>
+    </div>
+    <div class="field">
+      <label for="server">DSH server 地址（dsh web）</label>
+      <input id="server" type="text" placeholder="http://127.0.0.1:3080" spellcheck="false">
+    </div>
+    <button class="save" id="save">保存</button>
+    <div class="status off" id="status"><span class="dot"></span><span id="statusText">未连接</span></div>
+    <div class="hint">打开开关后，AI 代理可操作你的浏览器（含登录态）。关闭开关立即断开。</div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

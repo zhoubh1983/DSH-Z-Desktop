@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "DSH Chrome Control",
+  "version": "0.4.0",
+  "description": "让 DeepSeek Harness 的 AI 代理操作你的真实 Chrome（登录态、标签页、Cookie 全都在）。连接本地 dsh web 的 /chrome/ws 通道。",
+  "permissions": ["tabs", "debugger", "storage", "activeTab", "alarms"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "DSH Chrome Control"
+  }
+}

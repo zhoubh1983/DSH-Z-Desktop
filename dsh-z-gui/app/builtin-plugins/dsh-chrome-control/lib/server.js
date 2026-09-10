@@ -1,19 +1,52 @@
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { chmodSync, existsSync, readFileSync } from "node:fs";
-import * as http from "node:http";
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+/**
+ * dsh-chrome-control server（v0.4.0）：把用户真实 Chrome 以 mcp__chrome__* 工具暴露给 agent。
+ *
+ * 架构（无 daemon 进程，全部挂在 dsh web 自己的 webServer 上）：
+ *   agent ──MCP──▶ dsh web（webServer）
+ *                    ├─ /chrome/mcp     MCP Streamable HTTP server（工具的代理）
+ *                    ├─ /chrome/ws  ────WebSocket──▶ 浏览器扩展 ──CDP──▶ Chrome 页面
+ *                    └─ /chrome/status  liveness probe
+ *
+ * 帧协议（JSON text frame，`{type, ...}`）：
+ *   扩展 → 服务端：hello{payload:{extensionVersion}} / pong /
+ *                  tool_result{responseToRequestId, payload:{data|error}}
+ *   服务端 → 扩展：hello_ack{payload:{serverVersion}} / ping /
+ *                  tool_request{requestId, payload:{tool, params}}
+ *
+ * 工具调用路径：MCP CallTool → 生成 requestId → 发 tool_request → 等 tool_result → 返回 MCP。
+ * @module dsh-chrome/server
+ */
+
+import { randomUUID } from "node:crypto";
+import { WebSocketServer } from "ws";
 import * as McpClient from "@deepseek-ai/dsh-mcp-client";
-//#region src/protocol.ts
+
+/** Stable Cordis plugin name. */
+const name = "chrome-server";
+/** The bridge cannot mount routes before the web server exists. */
+const inject = ["webServer"];
+/** MCP Streamable HTTP endpoint on the shared web server. */
+const MCP_PATH = "/chrome/mcp";
+/** WebSocket endpoint the browser extension attaches to. */
+const WS_PATH = "/chrome/ws";
+/** Liveness probe path. */
+const STATUS_PATH = "/chrome/status";
+/** How long a tool call may wait for the extension before it fails. */
+const TOOL_TIMEOUT_MS = 35e3;
+/** Heartbeat interval: the server pings an attached extension so it can detect a dead peer. */
+const HEARTBEAT_MS = 25e3;
+/** Connection state: the one attached extension socket and in-flight tool calls. */
+const state = { ext: null, pending: new Map() };
+
 function isRecord(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
 /**
-* Parse one raw text frame from the extension.
-* @param text - the socket message body.
-* @returns the typed frame, or `undefined` when the frame is not one of ours.
-*/
+ * Parse one raw text frame from the extension.
+ * @param text - the socket message body.
+ * @returns the typed frame, or `undefined` when the frame is not one of ours.
+ */
 function parseClientFrame(text) {
 	let raw;
 	try {
@@ -45,273 +78,284 @@ function parseClientFrame(text) {
 		default: return;
 	}
 }
-//#endregion
-//#region src/server.ts
-/** Stable Cordis plugin name. */
-const name = "chrome-server";
-/** The bridge cannot mount routes before the web server exists. */
-const inject = ["webServer"];
-/** The daemon's fixed port. The extension's `dsh_chrome_url` default matches. */
-const DAEMON_PORT = 37086;
-/** Where the daemon's routes live. */
-const MCP_PATH = "/chrome/mcp";
-const STATUS_PATH = "/chrome/status";
-const SHUTDOWN_PATH = "/chrome/shutdown";
-/** How long to wait for a retiring daemon to release the port. */
-const PORT_FREE_TIMEOUT_MS = 5e3;
-/** Poll interval while waiting for that release. */
-const PORT_FREE_POLL_MS = 100;
+
 /**
-* The in-box MCP bridge's config, pointed at the daemon's own port. The URL
-* and the endpoint can never disagree — both are the daemon's fixed port.
-*/
-function bridgeConfig() {
+ * Build one server-to-extension frame.
+ * @param type - frame kind (`hello_ack` | `ping` | `tool_request`).
+ * @param payload - frame payload (the tool call for `tool_request`).
+ * @param requestId - correlation id used by `tool_request`.
+ */
+function buildServerFrame(type, payload, requestId) {
+	const frame = { type };
+	if (payload !== void 0) frame.payload = payload;
+	if (requestId !== void 0) frame.requestId = requestId;
+	return JSON.stringify(frame);
+}
+
+/** Send a raw text frame to the attached extension, if any. */
+function sendToExtension(text) {
+	const socket = state.ext;
+	if (socket === null || socket.readyState !== socket.OPEN) return false;
+	socket.send(text);
+	return true;
+}
+
+/**
+ * Resolve the WebSocket hub the extension attaches to. Origin is restricted to
+ * `chrome-extension://` pages (or absent, for local probes); a web page that
+ * finds the endpoint cannot attach.
+ */
+function createWsHub(log) {
+	const wss = new WebSocketServer({ noServer: true });
+	wss.on("connection", (socket, req) => {
+		if (state.ext !== null && state.ext !== socket) {
+			socket.close(4001, "another extension is attached");
+			return;
+		}
+		state.ext = socket;
+		log?.info("chrome extension attached");
+		socket.send(buildServerFrame("hello_ack", { serverVersion: "0.4.0" }));
+		socket.on("message", (data) => {
+			const frame = parseClientFrame(String(data));
+			if (frame === void 0) return;
+			switch (frame.type) {
+				case "hello": {
+					log?.info(`chrome extension hello v${frame.extensionVersion}`);
+					socket.send(buildServerFrame("hello_ack", { serverVersion: "0.4.0" }));
+					break;
+				}
+				case "tool_result": {
+					const pending = state.pending.get(frame.responseToRequestId);
+					if (pending === void 0) return;
+					state.pending.delete(frame.responseToRequestId);
+					clearTimeout(pending.timer);
+					if (frame.error !== void 0) pending.reject(new Error(frame.error));
+					else pending.resolve(frame.data);
+					break;
+				}
+				default: break;
+			}
+		});
+		socket.on("close", () => {
+			if (state.ext === socket) {
+				state.ext = null;
+				log?.info("chrome extension detached");
+			}
+			for (const [id, pending] of state.pending) {
+				if (pending.timer !== void 0) clearTimeout(pending.timer);
+				pending.reject(new Error("chrome extension disconnected mid-call"));
+				state.pending.delete(id);
+			}
+		});
+		socket.on("error", (error) => {
+			log?.warn(`chrome ws error: ${error instanceof Error ? error.message : String(error)}`);
+		});
+	});
+	const heartbeat = setInterval(() => {
+		if (state.ext !== null) {
+			try {
+				sendToExtension(buildServerFrame("ping"));
+			} catch { /* peer may be gone; close() will clear it */ }
+		}
+	}, HEARTBEAT_MS);
+	heartbeat.unref?.();
+	return wss;
+}
+
+/** The extension's connection liveness, for `/chrome/status`. */
+function extensionConnected() {
+	return state.ext !== null;
+}
+
+/** Dispatch one tool call to the extension and await its result. */
+function dispatchTool(tool, params) {
+	if (!extensionConnected()) {
+		throw new Error(
+			"No Chrome extension is attached. Open Chrome, load the extension at chrome://extensions (Developer mode → Load unpacked), and check the toggle in its popup."
+		);
+	}
+	const requestId = randomUUID();
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			state.pending.delete(requestId);
+			reject(new Error(`chrome tool "${tool}" timed out after ${TOOL_TIMEOUT_MS}ms`));
+		}, TOOL_TIMEOUT_MS);
+		state.pending.set(requestId, { resolve, reject, timer });
+		if (!sendToExtension(buildServerFrame("tool_request", { tool, params }, requestId))) {
+			clearTimeout(timer);
+			state.pending.delete(requestId);
+			reject(new Error("No Chrome extension is attached."));
+		}
+	});
+}
+
+// ---- MCP tool catalog（对齐 skills/chrome/SKILL.md 的 25 个工具） ----
+const TOOL_DEFS = [
+	{ name: "navigate", description: "Open a URL in the session's tab group. First call of a task must pass group_title; newTab:true keeps the previous tab.", inputSchema: { type: "object", properties: { session: { type: "string" }, url: { type: "string" }, newTab: { type: "boolean" }, group_title: { type: "string" } }, required: ["session", "url"] } },
+	{ name: "find_tab", description: "Find a tab in the session: by URL substring, or active:true to borrow the user's current tab.", inputSchema: { type: "object", properties: { session: { type: "string" }, url: { type: "string" }, active: { type: "boolean" } }, required: ["session"] } },
+	{ name: "list_tabs", description: "List every tab in the session's group; current:true flags the active tool tab.", inputSchema: { type: "object", properties: { session: { type: "string" } }, required: ["session"] } },
+	{ name: "close_tab", description: "Close one tab of the session by tab_id or url.", inputSchema: { type: "object", properties: { session: { type: "string" }, tab_id: { type: "string" }, url: { type: "string" } }, required: ["session"] } },
+	{ name: "close_session", description: "Close all tabs of the session. Call only when the user asks.", inputSchema: { type: "object", properties: { session: { type: "string" } }, required: ["session"] } },
+	{ name: "snapshot", description: "Return an accessibility outline of the page with @eN refs for interactive elements. mode: interactive|full|text; selector scopes to a subtree; diff:true returns only changes.", inputSchema: { type: "object", properties: { session: { type: "string" }, mode: { type: "string" }, selector: { type: "string" }, maxDepth: { type: "integer" }, diff: { type: "boolean" } }, required: ["session"] } },
+	{ name: "click", description: "Click an element by @e ref or CSS selector. trusted:true sends real browser input.", inputSchema: { type: "object", properties: { session: { type: "string" }, ref: { type: "string" }, selector: { type: "string" }, trusted: { type: "boolean" } }, required: ["session"] } },
+	{ name: "fill", description: "Replace the value of an input/textarea/contenteditable (fires the events frameworks listen for).", inputSchema: { type: "object", properties: { session: { type: "string" }, ref: { type: "string" }, selector: { type: "string" }, value: { type: "string" } }, required: ["session", "value"] } },
+	{ name: "upload", description: "Upload local files to a file input (or its visible trigger). paths may be a string or array; multiple for several files.", inputSchema: { type: "object", properties: { session: { type: "string" }, ref: { type: "string" }, selector: { type: "string" }, paths: { type: "array", items: { type: "string" } }, multiple: { type: "boolean" } }, required: ["session", "paths"] } },
+	{ name: "evaluate", description: "Run JavaScript in the page realm and return JSON.stringify-able data. Wrap bodies in an IIFE.", inputSchema: { type: "object", properties: { session: { type: "string" }, expression: { type: "string" } }, required: ["session", "expression"] } },
+	{ name: "screenshot", description: "Capture the page (or one selector) as base64 image. format: png|jpeg with quality.", inputSchema: { type: "object", properties: { session: { type: "string" }, selector: { type: "string" }, format: { type: "string" }, quality: { type: "integer" } }, required: ["session"] } },
+	{ name: "save_as_pdf", description: "Save the current page as PDF (base64).", inputSchema: { type: "object", properties: { session: { type: "string" } }, required: ["session"] } },
+	{ name: "mouse_click", description: "Trusted click at an element (selector) or raw x/y. button: left|right|middle, clickCount.", inputSchema: { type: "object", properties: { session: { type: "string" }, selector: { type: "string" }, x: { type: "integer" }, y: { type: "integer" }, button: { type: "string" }, clickCount: { type: "integer" } }, required: ["session"] } },
+	{ name: "key_type", description: "Type text into the focused element with trusted input.", inputSchema: { type: "object", properties: { session: { type: "string" }, text: { type: "string" } }, required: ["session", "text"] } },
+	{ name: "send_keys", description: "Press a key or chord (Enter, Escape, Control+A).", inputSchema: { type: "object", properties: { session: { type: "string" }, keys: { type: "string" } }, required: ["session", "keys"] } },
+	{ name: "hover", description: "Trusted hover over an element (opens menus/tooltips).", inputSchema: { type: "object", properties: { session: { type: "string" }, ref: { type: "string" }, selector: { type: "string" } }, required: ["session"] } },
+	{ name: "focus", description: "Give an element keyboard focus without clicking it.", inputSchema: { type: "object", properties: { session: { type: "string" }, ref: { type: "string" }, selector: { type: "string" } }, required: ["session"] } },
+	{ name: "select", description: "Choose an option in a native select or ARIA combobox; matches value, then exact text, then substring.", inputSchema: { type: "object", properties: { session: { type: "string" }, ref: { type: "string" }, selector: { type: "string" }, value: { type: "string" }, text: { type: "string" } }, required: ["session"] } },
+	{ name: "scroll", description: "Scroll the page or one pane. direction: down|up, optional pixels or deltaY.", inputSchema: { type: "object", properties: { session: { type: "string" }, direction: { type: "string" }, pixels: { type: "integer" }, deltaY: { type: "integer" }, selector: { type: "string" } }, required: ["session"] } },
+	{ name: "scroll_into_view", description: "Scroll an element into view and return its geometry.", inputSchema: { type: "object", properties: { session: { type: "string" }, ref: { type: "string" }, selector: { type: "string" } }, required: ["session"] } },
+	{ name: "find", description: "Find elements by plain-language query and return best-matching @e refs.", inputSchema: { type: "object", properties: { session: { type: "string" }, query: { type: "string" } }, required: ["session", "query"] } },
+	{ name: "wait", description: "Fixed sleep, capped at 3000ms.", inputSchema: { type: "object", properties: { session: { type: "string" }, ms: { type: "integer" } }, required: ["session", "ms"] } },
+	{ name: "wait_for_selector", description: "Poll until a selector is visible, or hidden with state:hidden.", inputSchema: { type: "object", properties: { session: { type: "string" }, selector: { type: "string" }, state: { type: "string" }, timeout: { type: "integer" } }, required: ["session", "selector"] } },
+	{ name: "network", description: "List the tab's recorded requests; filter by method, status, or URL substring.", inputSchema: { type: "object", properties: { session: { type: "string" }, method: { type: "string" }, status: { type: "integer" }, url: { type: "string" } }, required: ["session"] } },
+	{ name: "network_detail", description: "Return one request's headers, with body:true its response body.", inputSchema: { type: "object", properties: { session: { type: "string" }, requestId: { type: "string" }, body: { type: "boolean" } }, required: ["session", "requestId"] } },
+	{ name: "dialog", description: "Answer a native alert/confirm/prompt. action: accept|dismiss, text for prompts.", inputSchema: { type: "object", properties: { session: { type: "string" }, action: { type: "string" }, text: { type: "string" } }, required: ["session", "action"] } }
+];
+
+function resultOk(text) {
+	return { content: [{ type: "text", text }] };
+}
+function resultErr(message) {
+	return { isError: true, content: [{ type: "text", text: message }] };
+}
+
+// ---- MCP server（每个逻辑会话一个 SDK Server，共用工具目录与分派） ----
+async function createMcpHandler(log) {
+	const mcp = await import("@modelcontextprotocol/sdk/server/index.js");
+	const sdkHttp = await import("@modelcontextprotocol/sdk/server/streamableHttp.js");
+	const { ListToolsRequestSchema, CallToolRequestSchema } = await import("@modelcontextprotocol/sdk/types.js");
+
+	const Server = mcp.Server;
+	const StreamableHTTPServerTransport = sdkHttp.StreamableHTTPServerTransport;
+
+	function makeMCPServer() {
+		const s = new Server({ name: "dsh-chrome", version: "0.4.0" }, { capabilities: { tools: { listChanged: false } } });
+		s.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFS }));
+		s.setRequestHandler(CallToolRequestSchema, async (req) => {
+			const tool = req.params.name;
+			const args = req.params.arguments ?? {};
+			try {
+				const r = await dispatchTool(tool, args);
+				return resultOk(JSON.stringify(r));
+			} catch (error) {
+				return resultErr(error instanceof Error ? error.message : String(error));
+			}
+		});
+		return s;
+	}
+
+	const sessions = new Map();
+	let sessionSeq = 0;
+	return async function mcpHandler(req, res) {
+		const incoming = typeof req.headers["mcp-session-id"] === "string" ? req.headers["mcp-session-id"] : "";
+		const existing = incoming ? sessions.get(incoming) : undefined;
+		if (existing) {
+			await existing.transport.handleRequest(req, res);
+			return;
+		}
+		const id = `ch-${++sessionSeq}`;
+		const srv = makeMCPServer();
+		const transport = new StreamableHTTPServerTransport({
+			sessionIdGenerator: () => id,
+			onsessioninitialized: () => { sessions.set(id, { transport, server: srv }); }
+		});
+		sessions.set(id, { transport, server: srv });
+		try {
+			await srv.connect(transport);
+		} catch (connectError) {
+			log?.warn(`chrome MCP connect: ${connectError instanceof Error ? connectError.message : String(connectError)}`);
+			sessions.delete(id);
+			if (!res.headersSent) res.statusCode = 500;
+			res.end();
+			return;
+		}
+		await transport.handleRequest(req, res);
+	};
+}
+
+/** The MCP bridge config: our own Streamable HTTP endpoint on the shared web server. */
+function bridgeConfig(ctx) {
+	const port = ctx.webServer.port;
 	return {
 		serverName: "chrome",
 		transport: "streamable-http",
-		url: `http://127.0.0.1:${DAEMON_PORT}${MCP_PATH}`,
+		url: `http://127.0.0.1:${port}${MCP_PATH}`,
 		headers: {},
-		toolCallTimeoutMs: 35e3,
+		toolCallTimeoutMs: TOOL_TIMEOUT_MS,
 		failOnStartupError: false
 	};
 }
-/** Per-platform binary name: Windows needs the `.exe` suffix. */
-const EXE = process.platform === "win32" ? "chrome-daemon.exe" : "chrome-daemon";
-/** Platform-arch tuple matching the CI matrix output layout under `binaries/`. */
-const PLATFORM_ARCH = `${process.platform}-${process.arch}`;
-/**
-* Resolve the chrome-daemon binary: the shipped per-platform copy first, then
-* a dev build beside the plugin, then the legacy install dir.
-*/
-function resolveBinary() {
-	const here = fileURLToPath(new URL(".", import.meta.url));
-	return [
-		path.resolve(here, "..", "binaries", PLATFORM_ARCH, EXE),
-		path.resolve(here, "..", "daemon", "target", "release", EXE),
-		path.resolve(process.env.HOME ?? "", ".dsh-chrome", "bin", EXE)
-	].find((p) => existsSync(p));
-}
-/**
-* Probe the daemon: whether one is listening, and which build it is.
-*
-* A malformed or field-less body still counts as running — reuse must not hinge
-* on parsing, only the restart decision does.
-*/
-function probeStatus() {
-	return new Promise((resolve) => {
-		const req = http.get({
-			host: "127.0.0.1",
-			port: DAEMON_PORT,
-			path: STATUS_PATH,
-			timeout: 800
-		}, (res) => {
-			if (res.statusCode !== 200) {
-				res.resume();
-				res.on("end", () => resolve({ running: false }));
-				return;
-			}
-			let body = "";
-			res.setEncoding("utf8");
-			res.on("data", (chunk) => {
-				body += chunk;
-			});
-			res.on("end", () => {
-				try {
-					const build = JSON.parse(body)?.build;
-					resolve(typeof build === "string" && build !== "" ? {
-						running: true,
-						build
-					} : { running: true });
-				} catch {
-					resolve({ running: true });
-				}
-			});
-		});
-		req.on("error", () => resolve({ running: false }));
-		req.on("timeout", () => {
-			req.destroy();
-			resolve({ running: false });
-		});
-	});
-}
-/**
-* Decide what to do about a daemon that is already listening.
-*
-* Restarting is reserved for the one case we can prove: both hashes are known
-* and differ. Anything undecidable reuses the daemon — a needless restart drops
-* the extension's socket, so the bar for it is evidence, not suspicion.
-*
-* @param running - the build hash reported by the live daemon, if any.
-* @param local - the hash of the binary this install would spawn, if readable.
-*/
-function restartDecision(running, local) {
-	if (local === void 0) return {
-		restart: false,
-		reason: "unknown-local"
-	};
-	if (running === void 0) return {
-		restart: false,
-		reason: "unknown-running"
-	};
-	return running === local ? {
-		restart: false,
-		reason: "match"
-	} : {
-		restart: true,
-		reason: "changed"
-	};
-}
-/**
-* SHA-256 of the binary this install would spawn — the same identity the daemon
-* reports for itself, so the two are directly comparable.
-*/
-function localBuildHash(bin) {
-	try {
-		return createHash("sha256").update(readFileSync(bin)).digest("hex");
-	} catch {
-		return;
-	}
-}
-/** Ask a live daemon to retire itself. Resolves false when it will not. */
-function requestShutdown() {
-	return new Promise((resolve) => {
-		const req = http.request({
-			host: "127.0.0.1",
-			port: DAEMON_PORT,
-			path: SHUTDOWN_PATH,
-			method: "POST",
-			timeout: 2e3
-		}, (res) => {
-			res.resume();
-			res.on("end", () => resolve(res.statusCode === 202));
-		});
-		req.on("error", () => resolve(false));
-		req.on("timeout", () => {
-			req.destroy();
-			resolve(false);
-		});
-		req.end();
-	});
-}
-/** Poll until nothing answers on the port, or the timeout expires. */
-async function waitForPortFree() {
-	const deadline = Date.now() + PORT_FREE_TIMEOUT_MS;
-	for (;;) {
-		if (!(await probeStatus()).running) return true;
-		if (Date.now() >= deadline) return false;
-		await new Promise((r) => setTimeout(r, PORT_FREE_POLL_MS));
-	}
-}
-/**
-* Spawn the detached daemon, wiring its stdio into the harness logger for as
-* long as this process lives. The child handle is intentionally not returned:
-* nothing here owns the daemon's lifetime.
-*/
-function startDaemon(log) {
-	const bin = resolveBinary();
-	if (bin === void 0) {
-		log?.error("chrome-daemon binary not found; the agent will not see mcp__chrome__* tools");
-		return;
-	}
-	if (process.platform !== "win32") try {
-		chmodSync(bin, 493);
-	} catch {}
-	const child = spawn(bin, [
-		"--port",
-		String(DAEMON_PORT),
-		"--host",
-		"127.0.0.1"
-	], {
-		detached: true,
-		stdio: [
-			"ignore",
-			"pipe",
-			"pipe"
-		]
-	});
-	child.stdout.on("data", (d) => log?.info(`[chrome-daemon] ${d.toString().trimEnd()}`));
-	child.stderr.on("data", (d) => log?.warn(`[chrome-daemon] ${d.toString().trimEnd()}`));
-	child.on("exit", (code) => {
-		log?.info(`chrome-daemon exited code=${code}`);
-	});
-	log?.info(`chrome-daemon spawned: ${bin} (pid ${child.pid})`);
-	child.unref();
-	for (const stream of [child.stdout, child.stderr]) stream.unref?.();
-}
-/** Proxy `/chrome/status` on the shared web server to the daemon. */
-function createStatusProxyHandler() {
+
+/** The `/chrome/status` liveness handler. */
+function createStatusHandler(log) {
 	return async (_req, res) => {
-		const proxy = http.request({
-			host: "127.0.0.1",
-			port: DAEMON_PORT,
-			path: STATUS_PATH,
-			method: "GET",
-			timeout: 3e3
-		}, (upstream) => {
-			res.writeHead(upstream.statusCode ?? 502, upstream.headers);
-			upstream.pipe(res);
-		});
-		proxy.on("error", () => {
-			res.writeHead(503, { "content-type": "application/json" });
-			res.end(JSON.stringify({
-				name: "dsh-chrome",
-				running: false,
-				extension_connected: false
-			}));
-		});
-		proxy.on("timeout", () => {
-			proxy.destroy();
-			res.writeHead(504);
-			res.end();
-		});
-		proxy.end();
+		res.writeHead(200, { "content-type": "application/json" });
+		res.end(JSON.stringify({
+			ok: true,
+			build: "0.4.0",
+			extensionConnected: extensionConnected()
+		}));
 	};
 }
-/**
-* Bring the right daemon up: spawn one when the port is idle, reuse a matching
-* one, and retire a stale one left behind by an older install.
-*
-* The stale case is why this exists. The daemon is detached and outlives
-* `dsh web`, so after an upgrade the previous build is still listening and this
-* process holds no handle to it — it can only be retired by asking it to stop.
-*/
-async function ensureDaemon(log) {
-	const status = await probeStatus();
-	if (!status.running) {
-		startDaemon(log);
-		return;
-	}
-	const bin = resolveBinary();
-	const local = bin === void 0 ? void 0 : localBuildHash(bin);
-	const { restart, reason } = restartDecision(status.build, local);
-	if (!restart) {
-		if (reason === "unknown-running") log?.warn("chrome-daemon is running but reports no build id (older than this plugin); reusing it. To adopt the shipped binary, stop it once: kill the chrome-daemon process.");
-		else if (reason === "unknown-local") log?.warn("cannot hash the local chrome-daemon binary; reusing the running one");
-		else log?.info("chrome-daemon already running with a matching build; reusing it");
-		return;
-	}
-	const short = (h) => h?.slice(0, 12) ?? "unknown";
-	log?.info(`chrome-daemon build changed (running ${short(status.build)} \u2192 shipped ${short(local)}); restarting`);
-	if (!await requestShutdown()) {
-		log?.warn("the running chrome-daemon refused the shutdown request; keeping it. Stop it manually to pick up the new build.");
-		return;
-	}
-	if (!await waitForPortFree()) log?.error(`port ${DAEMON_PORT} still busy after shutdown; starting the new daemon anyway`);
-	startDaemon(log);
-}
-/**
-* Spawn the daemon, mount the status proxy, and load the in-box MCP client.
-* @param ctx - plugin context carrying the webServer service.
-*/
+
+/** Register routes and the MCP bridge on the shared web server. */
 function apply(ctx) {
 	const log = ctx.logger;
-	ensureDaemon(log);
-	ctx.effect(() => ctx.webServer.register({
-		kind: "exact",
-		path: STATUS_PATH,
-		handler: createStatusProxyHandler()
-	}));
-	ctx.plugin(McpClient, bridgeConfig());
+	const wss = createWsHub(log);
+	ctx.effect(() => {
+		const disposeWs = ctx.webServer.registerUpgrade({
+			path: WS_PATH,
+			handler: (req, socket, head) => {
+				const origin = req.headers.origin;
+				if (origin !== void 0 && !origin.startsWith("chrome-extension://")) {
+					log?.warn(`chrome ws rejected origin ${origin}`);
+					socket.destroy();
+					return;
+				}
+				wss.handleUpgrade(req, socket, head, (ws) => {
+					wss.emit("connection", ws, req);
+				});
+			}
+		});
+		const disposeMcp = ctx.webServer.register({
+			kind: "exact",
+			path: MCP_PATH,
+			handler: mcpHandlerRef
+		});
+		const disposeStatus = ctx.webServer.register({
+			kind: "exact",
+			path: STATUS_PATH,
+			handler: createStatusHandler(log)
+		});
+		return () => {
+			disposeWs();
+			disposeMcp();
+			disposeStatus();
+		};
+	});
+	ctx.plugin(McpClient, bridgeConfig(ctx));
 }
-//#endregion
-export { DAEMON_PORT, apply, bridgeConfig, inject, localBuildHash, name, parseClientFrame, restartDecision };
+
+/** Async handler placeholder; initialized lazily so the SDK import never blocks boot. */
+let mcpHandlerRef = async (req, res) => {
+	res.writeHead(503, { "content-type": "application/json" });
+	res.end(JSON.stringify({ ok: false, error: "chrome mcp not ready" }));
+};
+createMcpHandler(undefined).then((handler) => {
+	mcpHandlerRef = handler;
+}).catch((error) => {
+	console.error(`[dsh-chrome] failed to init MCP server: ${error instanceof Error ? error.message : String(error)}`);
+});
+
+export {
+	MCP_PATH, STATUS_PATH, TOOL_DEFS, WS_PATH,
+	apply, bridgeConfig, buildServerFrame, dispatchTool, extensionConnected,
+	inject, name, parseClientFrame
+};

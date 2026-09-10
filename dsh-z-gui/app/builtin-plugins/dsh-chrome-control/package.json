@@ -1,7 +1,7 @@
 {
   "name": "dsh-chrome-control",
-  "version": "0.3.2",
-  "description": "DeepSeek Harness (DSH) bundle: spawns the Rust chrome-daemon process exposing the user's real Chrome to the agent as mcp__chrome__* tools.",
+  "version": "0.4.0",
+  "description": "DeepSeek Harness (DSH) bundle: exposes the user's real Chrome to the agent as mcp__chrome__* tools. /chrome/mcp + /chrome/ws live on the harness's own webServer; a browser extension bridges CDP. No separate daemon process.",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -28,7 +28,7 @@
   },
   "files": [
     "lib/**/*.js",
-    "binaries/**/*",
+    "extension/**/*",
     "cordis.patch.yml",
     "skills/**/*"
   ],
@@ -46,6 +46,7 @@
     }
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
