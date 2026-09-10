@@ -1,7 +1,7 @@
 {
   "name": "dsh-gui",
   "productName": "DSH Desktop",
-  "version": "0.0.9",
+  "version": "0.1.0",
   "description": "DeepSeek Harness 桌面版：内置 Node 运行时的 Electron 壳，开箱即用，无需安装 Node 或任何运行时。",
   "main": "main/index.js",
   "author": "dsh",
