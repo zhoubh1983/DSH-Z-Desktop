@@ -18,4 +18,9 @@ contextBridge.exposeInMainWorld('dshGui', {
     toggle: () => ipcRenderer.send('browser:toggle'),
     showTab: (id) => ipcRenderer.send('browser:showtab', id),
   },
+  // 桌面标题栏（dsh-desktop-frame 插件）：动作执行 + 状态读取。
+  desktop: {
+    action: (cmd, payload) => ipcRenderer.send('desktop:action', cmd, payload),
+    getState: () => ipcRenderer.invoke('desktop:getState'),
+  },
 })

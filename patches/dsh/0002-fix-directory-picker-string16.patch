@@ -1,5 +1,5 @@
 diff --git a/packages/host/directory-picker-native/src/win32-dialog-bindings.ts b/packages/host/directory-picker-native/src/win32-dialog-bindings.ts
-index ef7795c..4c45a84 100644
+index 67abdf5..159a361 100644
 --- a/packages/host/directory-picker-native/src/win32-dialog-bindings.ts
 +++ b/packages/host/directory-picker-native/src/win32-dialog-bindings.ts
 @@ -21,7 +21,11 @@ interface Koffi {
@@ -15,33 +15,31 @@ index ef7795c..4c45a84 100644
    register(fn: (...args: unknown[]) => unknown, type: unknown): unknown
    unregister(callback: unknown): void
    sizeof(type: string): number
-@@ -29,18 +33,26 @@ interface Koffi {
- }
+@@ -29,18 +33,25 @@ interface Koffi {
  
  /**
-- * Read a NUL-terminated UTF-16 string at a native address. koffi's
-- * `_Out_ void **` out-params surface a raw address, and
-- * `koffi.decode(addr, 'str16')` would dereference it as a pointer — crash
-- * on real Windows — so view the memory directly instead.
-+ * Read a NUL-terminated UTF-16 string at a native address.
+  * Read a valid NUL-terminated UTF-16 allocation without an external buffer.
+- * Generic `koffi.decode(..., 'str16')` expects a pointer variable, so the
+- * buffer holds the string address rather than the string bytes.
 + *
 + * `koffi.decode.string16(addr)` reads it safely (official documented API). Do
 + * NOT use `koffi.decode(addr, 'str16')` here — koffi 3.1.6 crashes on it even
 + * for VALID NUL-terminated buffers (plain node exits 0xC0000005 access
 + * violation; Electron RUN_AS_NODE exits 0xFFFF7003 V8 heap crash, observed as
 + * "win32 folder dialog worker exited before reporting a result
-+ * (exit=4294930435)" on the packaged app). The even earlier
-+ * `koffi.view(addr, 32768)` over-read past short strings and SIGABRTed
-+ * (exit 134) when the memory after the string was unmapped.
-+ * @returns the decoded string, or '' when the address is null/invalid.
++ * (exit=4294930435)" on the packaged app).
+  * @param koffi - the loaded koffi binding.
+  * @param address - the string address surfaced by the `_Out_ void **` param.
+- * @param pointerSize - the process's pointer width (`koffi.sizeof('void *')`).
+- * @returns the decoded UTF-16 path.
++ * @returns the decoded UTF-16 path, or '' when the address is null/invalid.
   */
- function readUtf16(koffi: Koffi, address: unknown): string {
--  const bytes = Buffer.from(koffi.view(address, 32768))
--  let end = 0
--  // UTF-16LE NUL is two zero bytes. A single zero low byte is a valid BMP
--  // code unit (U+XX00, e.g. 开 = U+5F00) and must not terminate the scan.
--  while (end + 1 < bytes.length && !(bytes[end] === 0 && bytes[end + 1] === 0)) end += 2
--  return bytes.toString('utf16le', 0, end)
+-function readUtf16(koffi: Koffi, address: unknown, pointerSize: number): string {
+-  const pointer = Buffer.alloc(8)
+-  // koffi 3 surfaces `_Out_ void **` values as BigInt native addresses.
+-  pointer.writeBigUInt64LE(BigInt(address as bigint | number))
+-  return koffi.decode(pointer.subarray(0, pointerSize), 'str16') as string
++function readUtf16(koffi: Koffi, address: unknown): string {
 +  if (address == null) return ''
 +  try {
 +    const decoded = koffi.decode.string16(address)
@@ -52,3 +50,12 @@ index ef7795c..4c45a84 100644
  }
  
  const COINIT_APARTMENTTHREADED = 0x2
+@@ -167,7 +178,7 @@ export async function loadWin32DialogBindings(): Promise<Win32DialogBindings> {
+             const nameOut: unknown[] = [null]
+             const gotName = method(item, SLOT_GET_DISPLAY_NAME, protoGetDisplayName)(SIGDN_FILESYSPATH, nameOut)
+             if (gotName < 0) return { hr: gotName }
+-            const path = readUtf16(koffi, nameOut[0], pointerSize)
++            const path = readUtf16(koffi, nameOut[0])
+             coTaskMemFree(nameOut[0])
+             return { hr: gotName, path }
+           } finally {

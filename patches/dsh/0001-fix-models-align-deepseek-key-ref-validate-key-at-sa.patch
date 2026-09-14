@@ -1,5 +1,5 @@
 diff --git a/packages/client/ui-settings-models/src/client/ProviderEditor.tsx b/packages/client/ui-settings-models/src/client/ProviderEditor.tsx
-index ffa8c2e..e4852b2 100644
+index ffa8c2e..b25dd5f 100644
 --- a/packages/client/ui-settings-models/src/client/ProviderEditor.tsx
 +++ b/packages/client/ui-settings-models/src/client/ProviderEditor.tsx
 @@ -246,9 +246,11 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
@@ -17,106 +17,43 @@ index ffa8c2e..e4852b2 100644
        && stringAt(fallback, 'apiKeyEnv') === undefined && keyValue.length > 0
        ? schema.setPath(draft, ['apiKeyEnv'], keyRef)
        : draft
-@@ -288,7 +290,6 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
+@@ -288,6 +290,23 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
        const stored = await operations.storeCredential(keyRef, keyValue)
        if (stored !== undefined) return stored
      }
--    setKeyDraft('')
++    // Save-time validation for the deepseek family: "configured" must mean the
++    // key actually authenticates, not merely that a value was persisted under
++    // the profile's reference. A probe that fails keeps the card open with the
++    // error so the user corrects it here instead of discovering it on the first
++    // real turn. The typed key still wins for this probe; a blank-key resave
++    // validates whatever key the profile now resolves.
++    if (layout === 'deepseek' && probeBaseURL !== undefined) {
++      const validated = await operations.discoverModels(namespace.ns, {
++        provider: props.provider,
++        baseURL: probeBaseURL,
++        ...keyValue.length === 0 ? {} : { apiKey: keyValue },
++      })
++      if (validated.kind !== 'found') {
++        setFailure(validated.message)
++        return
++      }
++    }
+     setKeyDraft('')
      return undefined
    }
- 
-@@ -301,7 +302,27 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
-         setFailure(failure)
-         return
-       }
-+      // Save-time validation for the deepseek family: "configured" must mean the
-+      // key actually authenticates, not merely that a value was persisted under
-+      // the profile's reference. A probe that fails keeps the card open with the
-+      // error so the user corrects it here instead of discovering it on the first
-+      // real turn. The typed key still wins for this probe; a blank-key resave
-+      // validates whatever key the profile now resolves.
-+      if (layout === 'deepseek' && probeBaseURL !== undefined) {
-+        const validated = await operations.discoverModels(namespace.ns, {
-+          provider: props.provider,
-+          baseURL: probeBaseURL,
-+          ...keyValue.length === 0 ? {} : { apiKey: keyValue },
-+        })
-+        if (validated.kind !== 'found') {
-+          setFailure(validated.message)
-+          return
-+        }
-+      }
-+      setKeyDraft('')
-       props.onClose(true)
-+    } catch (error) {
-+      setFailure(error instanceof Error ? error.message : String(error))
-     } finally {
-       setBusy(false)
-     }
-diff --git a/packages/llm/llm-deepseek/src/discovery.ts b/packages/llm/llm-deepseek/src/discovery.ts
-new file mode 100644
-index 0000000..79956d5
---- /dev/null
-+++ b/packages/llm/llm-deepseek/src/discovery.ts
-@@ -0,0 +1,46 @@
-+﻿/**
-+ * DeepSeek endpoint interrogation for the configuration surface's model
-+ * listing and credential-check actions.
-+ *
-+ * The official DeepSeek API and its OpenAI-compatible gateways expose the same
-+ * `GET /models` listing shape the shared discovery helper reads, so the probe
-+ * delegates to it. Unlike pi-ai, there is deliberately **no** catalog
-+ * short-circuit here: this module exists so a save can genuinely validate a
-+ * drafted endpoint + key over the wire, which a static catalog would answer
-+ * without ever testing the credential.
-+ *
-+ * @module dsh-llm-deepseek/discovery
-+ */
-+
-+import { listOpenAiCompatibleModels, usableProbeKey } from '@deepseek-ai/dsh-llm'
-+import type { LlmDiscoveredModel, LlmModelDiscoveryRequest } from '@deepseek-ai/dsh-llm'
-+
-+/**
-+ * Probe a deepseek endpoint for the models it advertises, validating the
-+ * endpoint and key in the same transit the user is about to save.
-+ * @param request - the drafted endpoint and one-shot credential from the form.
-+ * @param resolveBaseURL - the profile's effective endpoint, used when the draft
-+ *   carries none (an already-configured route revalidates its stored URL).
-+ * @param storedApiKey - the credential the configured route already resolves,
-+ *   asked for only when the draft carries none. `undefined` — not a throw — is
-+ *   how "no key stored" is reported, so the probe stays unauthenticated.
-+ * @returns the advertised models in endpoint order.
-+ * @throws HarnessError from the shared helper: `INVALID_CREDENTIAL_CODE` on a
-+ *   401/403, `DISCOVERY_FAILED` on transport or shape failures.
-+ */
-+export async function probeDeepSeek(
-+  request: LlmModelDiscoveryRequest,
-+  resolveBaseURL: () => string,
-+  storedApiKey?: () => Promise<string | undefined>,
-+): Promise<readonly LlmDiscoveredModel[]> {
-+  const baseURL = (request.baseURL !== undefined && request.baseURL.length > 0)
-+    ? request.baseURL
-+    : resolveBaseURL()
-+  const supplied = request.apiKey ?? await storedApiKey?.()
-+  const apiKey = supplied === undefined ? undefined : usableProbeKey(supplied)
-+  return listOpenAiCompatibleModels({
-+    baseURL,
-+    ...apiKey === undefined ? {} : { apiKey },
-+  })
-+}
 diff --git a/packages/llm/llm-deepseek/src/index.ts b/packages/llm/llm-deepseek/src/index.ts
-index fa4da0a..fc91d72 100644
+index d536fc1..443a7b1 100644
 --- a/packages/llm/llm-deepseek/src/index.ts
 +++ b/packages/llm/llm-deepseek/src/index.ts
-@@ -18,6 +18,7 @@ import type { ModelModality, RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
+@@ -14,6 +14,7 @@
+ import type { Context } from '@deepseek-ai/cordis'
+ import z from '@deepseek-ai/schemastery'
+ import { assertUsableApiKey, LlmError, resolveImageAttachmentAccess, resolveRetryPolicy, RetryPolicySchema } from '@deepseek-ai/dsh-llm'
++import { probeDeepSeek } from './discovery.ts'
+ import type { ModelModality, RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
  import type {} from '@deepseek-ai/dsh-fs'
  import { credentialRef } from '@deepseek-ai/dsh-credentials'
- import { launchEnvironmentOf, type LaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
-+import { probeDeepSeek } from './discovery.ts'
- import type {} from '@deepseek-ai/dsh-settings'
- import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
- import { deepEqualJson } from '@deepseek-ai/dsh-util-values'
-@@ -471,6 +472,30 @@ export function apply(ctx: Context, config: Config): void {
+@@ -487,6 +488,30 @@ export function apply(ctx: Context, config: Config): void {
    ctx.llm.registerConfigurableProviders([
      { provider: PROVIDER, displayName: 'DeepSeek', settingsNs: NS, settingsPath: [] },
    ])
@@ -139,254 +76,11 @@ index fa4da0a..fc91d72 100644
 +  // over the wire the save is about to persist, not a static catalog, so the
 +  // "configured" indicator can mean the key actually authenticated instead of
 +  // merely that a value was stored under a derived reference.
-+  ctx.llm.registerModelDiscovery(NS, request => probeDeepSeek(
-+    request,
++  ctx.llm.registerModelDiscovery(NS, (request, signal) => probeDeepSeek(
++    { ...request, ...signal === undefined ? {} : { signal } },
 +    () => options().baseURL,
 +    storedApiKeyForProfile,
 +  ))
    // Route effects bind to this apply fiber via the stable `ctx` reference,
    // even when a swap runs inside the scoped settings callback below.
    const registration = ctx.llm.registerAdapter([PROVIDER], adapter)
-diff --git a/packages/llm/llm/src/discovery.ts b/packages/llm/llm/src/discovery.ts
-new file mode 100644
-index 0000000..005c941
---- /dev/null
-+++ b/packages/llm/llm/src/discovery.ts
-@@ -0,0 +1,225 @@
-+﻿/**
-+ * Shared OpenAI-compatible model-listing interrogation for configuration
-+ * surfaces. Adapter families that speak OpenAI's `GET /models` shape with
-+ * bearer auth can validate and discover a drafted endpoint through this single
-+ * wire path — the harness must read one listing shape, not one per adapter.
-+ *
-+ * This is deliberately protocol-shipping, not catalog knowledge: nothing here
-+ * is stored. The requester carries a draft the user is still editing; the reply
-+ * is candidate metadata it offers for adoption, and a probe doubles as a live
-+ * credential check (a 401/403 reads back as `INVALID_CREDENTIAL_CODE`).
-+ *
-+ * @module @deepseek-ai/dsh-llm/discovery
-+ */
-+
-+import { INVALID_CREDENTIAL_CODE } from './error.ts'
-+import { HarnessError } from './error.ts'
-+import { normalizeApiKey } from './api-key.ts'
-+import { attributionHeaders } from './attribution.ts'
-+import type { LlmDiscoveredModel } from './types.ts'
-+
-+/**
-+ * Endpoint replies larger than this are refused. The endpoint is whatever URL
-+ * the user typed, so the ceiling holds on the bytes actually read rather than
-+ * on the length the server claims — the same two-stage shape that guards every
-+ * caller-supplied URL, except that a truncated model listing is not parseable,
-+ * so overflow rejects instead of truncating.
-+ */
-+const MAX_RESPONSE_BYTES = 4 * 1024 * 1024
-+
-+/** One entry of an OpenAI-compatible `GET /models` reply. */
-+interface ListingEntry {
-+  id?: unknown
-+  /** Common gateway extensions; absent from the official listings. */
-+  name?: unknown
-+  display_name?: unknown
-+  context_window?: unknown
-+  context_length?: unknown
-+  max_tokens?: unknown
-+  max_output_tokens?: unknown
-+}
-+
-+/** A positive integer field of a listing entry, or `undefined` when absent or unusable. */
-+function capacity(...candidates: readonly unknown[]): number | undefined {
-+  for (const candidate of candidates) {
-+    if (typeof candidate === 'number' && Number.isInteger(candidate) && candidate > 0) return candidate
-+  }
-+  return undefined
-+}
-+
-+/** A non-empty string field of a listing entry, or `undefined`. */
-+function label(...candidates: readonly unknown[]): string | undefined {
-+  for (const candidate of candidates) {
-+    if (typeof candidate === 'string' && candidate.length > 0) return candidate
-+  }
-+  return undefined
-+}
-+
-+/**
-+ * Join the endpoint base with the listing path. The base is treated as a
-+ * prefix rather than a URL to resolve against, so a deployment path such as
-+ * `https://gateway.example/openai/v1` keeps its segments instead of losing
-+ * them to `URL` resolution.
-+ */
-+export function listingUrl(baseURL: string): string {
-+  return `${baseURL.replace(/\/+$/, '')}/models`
-+}
-+
-+/**
-+ * Read a reply body, refusing one that outgrows the ceiling. A declared length
-+ * is checked first so an honest server is turned away without transferring
-+ * anything; the accumulated total is what actually enforces the bound, because
-+ * a server that under-declares (or streams) tells us nothing up front.
-+ */
-+async function readBounded(response: Response, url: string): Promise<string> {
-+  const oversized = (): HarnessError =>
-+    new HarnessError(`${url} answered with more than ${MAX_RESPONSE_BYTES} bytes`, 'DISCOVERY_FAILED')
-+  const declared = Number(response.headers.get('content-length') ?? Number.NaN)
-+  if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
-+    await response.body?.cancel()
-+    throw oversized()
-+  }
-+  /* v8 ignore next -- fetch always exposes a body stream on a 2xx Response; the null guard is defensive. */
-+  if (response.body === null) return ''
-+  const reader = response.body.getReader()
-+  const chunks: Uint8Array[] = []
-+  let total = 0
-+  try {
-+    for (;;) {
-+      const { done, value } = await reader.read()
-+      if (done) break
-+      total += value.byteLength
-+      if (total > MAX_RESPONSE_BYTES) throw oversized()
-+      chunks.push(value)
-+    }
-+  } finally {
-+    /* v8 ignore next 4 -- cancel() after a completed or abandoned read settles without rejecting; unobserved best-effort cleanup. */
-+    await reader.cancel().catch(() => {
-+      // Cancel after a drained read, or after this function walked away from
-+      // an oversized one, is cleanup; the reply is already decided either way.
-+    })
-+  }
-+  const body = new Uint8Array(total)
-+  let offset = 0
-+  for (const chunk of chunks) {
-+    body.set(chunk, offset)
-+    offset += chunk.byteLength
-+  }
-+  return new TextDecoder().decode(body)
-+}
-+
-+/**
-+ * Read one OpenAI-compatible listing reply. Entries without a usable id are
-+ * skipped rather than failing the whole interrogation: a single malformed row
-+ * should not deny the user the rest of a working endpoint's catalog.
-+ */
-+function readListing(body: unknown): LlmDiscoveredModel[] {
-+  const data = (body as { data?: unknown } | null)?.data
-+  if (!Array.isArray(data)) {
-+    throw new HarnessError(
-+      'the endpoint\'s model listing has no "data" array; enter this provider\'s models by hand',
-+      'DISCOVERY_FAILED',
-+    )
-+  }
-+  const models: LlmDiscoveredModel[] = []
-+  for (const raw of data) {
-+    const entry = raw as ListingEntry | null
-+    const id = label(entry?.id)
-+    if (id === undefined) continue
-+    const name = label(entry?.name, entry?.display_name)
-+    const contextWindow = capacity(entry?.context_window, entry?.context_length)
-+    const maxTokens = capacity(entry?.max_output_tokens, entry?.max_tokens)
-+    models.push({
-+      id,
-+      ...name === undefined ? {} : { name },
-+      ...contextWindow === undefined ? {} : { contextWindow },
-+      ...maxTokens === undefined ? {} : { maxTokens },
-+    })
-+  }
-+  return models
-+}
-+
-+/**
-+ * Accept one probe key, or refuse it before the header is built. Without this
-+ * the `fetch` below would throw a ByteString `TypeError` that its callers'
-+ * catch reports as a network failure — blaming the transport for a local,
-+ * deterministic fault.
-+ * @param raw - the key typed into the form or read from storage.
-+ * @returns the trimmed, usable key.
-+ */
-+export function usableProbeKey(raw: string): string {
-+  const checked = normalizeApiKey(raw)
-+  if (checked.ok) return checked.value
-+  throw new HarnessError(
-+    checked.reason === 'empty'
-+      ? 'this provider\'s API key is blank; enter it on the Models page, or clear it to probe unauthenticated'
-+      : 'this provider\'s API key contains characters no HTTP header can carry; paste the raw key only',
-+    INVALID_CREDENTIAL_CODE,
-+  )
-+}
-+
-+/** Arguments to {@link listOpenAiCompatibleModels}. */
-+export interface OpenAiListingRequest {
-+  /** Endpoint base; `/models` is appended. */
-+  baseURL: string
-+  /** Bearer key proven to build a legal header; omit to probe unauthenticated. */
-+  apiKey?: string
-+  /** Caller cancellation; the probe settles promptly after it aborts. */
-+  signal?: AbortSignal
-+}
-+
-+/**
-+ * Interrogate an OpenAI-compatible endpoint's `GET /models` listing.
-+ * @param request - the endpoint and optional one-shot key.
-+ * @returns the advertised models in endpoint order.
-+ * @throws HarnessError `INVALID_CREDENTIAL_CODE` on a 401/403 (an auth probe
-+ *   distinction the caller needs), `DISCOVERY_FAILED` on any other transport,
-+ *   status, or shape failure.
-+ */
-+export async function listOpenAiCompatibleModels(
-+  request: OpenAiListingRequest,
-+): Promise<readonly LlmDiscoveredModel[]> {
-+  const url = listingUrl(request.baseURL)
-+  let response: Response
-+  try {
-+    response = await fetch(url, {
-+      method: 'GET',
-+      headers: {
-+        accept: 'application/json',
-+        ...request.apiKey === undefined ? {} : { authorization: `Bearer ${request.apiKey}` },
-+        ...attributionHeaders(),
-+      },
-+      ...request.signal === undefined ? {} : { signal: request.signal },
-+    })
-+  } catch (error: unknown) {
-+    if (request.signal?.aborted) {
-+      throw new HarnessError('model discovery aborted by caller', 'ABORTED', { cause: error })
-+    }
-+    throw new HarnessError(`could not reach ${url}`, 'DISCOVERY_FAILED', { cause: error })
-+  }
-+  if (!response.ok) {
-+    throw new HarnessError(
-+      `${url} answered ${response.status}${response.status === 401 || response.status === 403 ? '; check the API key' : ''}`,
-+      response.status === 401 || response.status === 403 ? INVALID_CREDENTIAL_CODE : 'DISCOVERY_FAILED',
-+    )
-+  }
-+  let text: string
-+  try {
-+    text = await readBounded(response, url)
-+  } catch (error: unknown) {
-+    // Cancellation during the body read rejects with the abort reason, which
-+    // may be any value; the caller gets the same coded failure it would have
-+    // for a cancellation before the request went out.
-+    if (request.signal?.aborted) {
-+      throw new HarnessError('model discovery aborted by caller', 'ABORTED', { cause: error })
-+    }
-+    throw error
-+  }
-+  let body: unknown
-+  try {
-+    body = JSON.parse(text)
-+  } catch (error: unknown) {
-+    throw new HarnessError(`${url} did not answer with JSON`, 'DISCOVERY_FAILED', { cause: error })
-+  }
-+  return readListing(body)
-+}
-diff --git a/packages/llm/llm/src/index.ts b/packages/llm/llm/src/index.ts
-index cdecc4c..170abc9 100644
---- a/packages/llm/llm/src/index.ts
-+++ b/packages/llm/llm/src/index.ts
-@@ -38,6 +38,7 @@ export * from './attribution.ts'
- export * from './brand.ts'
- export * from './error.ts'
- export * from './api-key.ts'
-+export * from './discovery.ts'
- export * from './types.ts'
- export * from './content.ts'
- export * from './message.ts'

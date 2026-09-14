@@ -18,10 +18,14 @@ const fs = require('node:fs')
 const http = require('node:http')
 const os = require('node:os')
 const { WebContentsView } = require('electron')
-const { getWindow } = require('./window')
+const { getWindow, getChromeHeight } = require('./window')
 
 /** 内嵌 Dock 在窗口右侧占据的宽度。 */
 const DOCK_WIDTH = 420
+/** 面板宽度下限。 */
+const DOCK_MIN_WIDTH = 260
+/** 面板宽度上限占窗宽比例。 */
+const DOCK_MAX_RATIO = 0.6
 /** 通用页签栏高度（px，常驻面板顶部）。 */
 const TAB_BAR_H = 40
 /** browser 标签地址栏高度（px，位于页签栏下方）。 */
@@ -35,23 +39,32 @@ const SCREENSHOT_DIR = path.join(process.env.DSH_HOME || path.join(os.homedir(),
 // 统一浅色样式，id 用 rpn_ 前缀防冲突；脚本避免实验性语法（不用 ?. 等），fetch 均带错误显示。
 // 这些页面对脚本内 `<` 等 HTML 转义没有硬性要求。
 
-// 通用「页签栏」：常驻面板顶部，三页签 + 关闭 ✕，当前页签高亮。
+// 通用「页签栏」：常驻面板顶部，页签 + 关闭 ✕，当前页签高亮。
 // 支持 ?active=<tab> 查询参数（首次加载用），切换后由主进程 executeJavaScript 刷新高亮。
+// 左缘拖拽条调宽度；右侧 ⛶ 全屏、▤ 分屏（browser 标签下浏览器/插件上下分屏）。
 const TABBAR_HTML = `
 <!doctype html><html><head><meta charset="utf-8"><title>面板</title><style>
 html,body{margin:0;height:100%;overflow:hidden}
 body{font-family:ui-sans-serif,system-ui,sans-serif;background:#f7f8fa}
 #rpn_tabs{display:flex;align-items:center;gap:4px;white-space:nowrap;height:40px;padding:0 6px;background:#f7f8fa;border-bottom:1px solid #d4d8e4;box-sizing:border-box}
+#rpn_drag{flex:0 0 auto;width:6px;height:100%;cursor:ew-resize;background:transparent}
+#rpn_drag:hover{background:#dbe0ec}
 .rpn_tab{flex:0 0 auto;white-space:nowrap;display:flex;align-items:center;justify-content:center;height:40px;padding:0 10px;border:none;background:transparent;font-size:11px;color:#57606a;cursor:pointer;border-bottom:2px solid transparent}
 .rpn_tab:hover{background:#eef1f6;color:#24292f}
 .rpn_tab.active{color:#5B5BD6;font-weight:600;border-bottom-color:#5B5BD6;background:#fff}
+.rpn_btn{flex:0 0 auto;width:28px;height:28px;padding:0;border:1px solid #d4d8e4;background:#fff;border-radius:6px;font-size:12px;color:#57606a;cursor:pointer;line-height:1}
+.rpn_btn:hover{background:#eef1f6;color:#24292f}
 #rpn_close{margin-left:auto;flex:0 0 auto;width:32px;height:40px;padding:0;border:none;background:transparent;font-size:15px;color:#57606a;cursor:pointer;border-bottom:2px solid transparent}
 #rpn_close:hover{background:#fdecec;color:#c0392b}
 </style></head><body>
 <div id="rpn_tabs">
+  <div id="rpn_drag" title="拖拽调整宽度"></div>
   <button class="rpn_tab" data-tab="browser" title="浏览器标签">浏览器</button>
   <button class="rpn_tab" data-tab="fs" title="目录标签">目录</button>
   <button class="rpn_tab" data-tab="prev" title="预览标签">预览</button>
+  <button class="rpn_tab" data-tab="plugin" title="插件面板">插件</button>
+  <button class="rpn_btn" id="rpn_full" title="面板全屏/还原">⛶</button>
+  <button class="rpn_btn" id="rpn_split" title="浏览器/插件分屏">▤</button>
   <button id="rpn_close" title="关闭面板">✕</button>
 </div>
 <script>
@@ -59,6 +72,7 @@ body{font-family:ui-sans-serif,system-ui,sans-serif;background:#f7f8fa}
   var m=new RegExp('[?&]active=([^&]*)').exec(location.search);
   var active=m?decodeURIComponent(m[1]):'';
   var tabs=document.querySelectorAll('.rpn_tab');
+  var st=window.__rpnState={width:420,full:false,split:false};
   tabs.forEach(function(b){
     if(b.getAttribute('data-tab')===active){ b.classList.add('active'); }
     b.addEventListener('click',function(){
@@ -68,6 +82,28 @@ body{font-family:ui-sans-serif,system-ui,sans-serif;background:#f7f8fa}
   document.getElementById('rpn_close').addEventListener('click',function(){
     fetch('/action/close',{method:'POST'}).catch(function(){});
   });
+  document.getElementById('rpn_full').addEventListener('click',function(){
+    fetch('/action/fullscreen',{method:'POST'}).catch(function(){});
+  });
+  document.getElementById('rpn_split').addEventListener('click',function(){
+    fetch('/action/split',{method:'POST'}).catch(function(){});
+  });
+  document.getElementById('rpn_drag').addEventListener('mousedown',function(e){
+    var startX=e.clientX, startW=st.width;
+    function mv(ev){
+      var nw=Math.round(startW+(startX-ev.clientX));
+      fetch('/action/resize',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({width:nw})}).catch(function(){});
+    }
+    function up(){ window.removeEventListener('mousemove',mv); window.removeEventListener('mouseup',up); }
+    window.addEventListener('mousemove',mv);
+    window.addEventListener('mouseup',up);
+    e.preventDefault();
+  });
+  window.__setState=function(s){ st.width=s.width||420; st.full=!!s.full; st.split=!!s.split; };
+  fetch('/state',{method:'GET'})
+    .then(function(r){return r.json();})
+    .then(function(d){ if(d){ window.__setState(d); } })
+    .catch(function(){});
 })();
 </script></body></html>`
 
@@ -256,26 +292,56 @@ body{font-family:ui-sans-serif,system-ui,sans-serif;background:#f7f8fa;color:#1f
 </div>
 </body></html>`
 
+const PLUGIN_HTML = `
+<!doctype html><html><head><meta charset="utf-8"><title>插件面板</title><style>
+html,body{margin:0;height:100%}
+body{font-family:ui-sans-serif,system-ui,sans-serif;background:#f7f8fa;color:#1f2328;display:flex;align-items:center;justify-content:center;height:100%;box-sizing:border-box}
+#rpn_plug{width:calc(100% - 40px);max-width:320px;padding:20px;background:#fff;border:1px solid #e3e6ec;border-radius:10px;box-sizing:border-box;font-size:12px;line-height:1.6;color:#57606a}
+#rpn_plug h1{margin:0 0 8px;font-size:15px;color:#24292f}
+</style></head><body>
+<div id="rpn_plug">
+  <h1>插件面板</h1>
+  <p>预留的插件面板槽位：浏览器控制类插件（如 dsh-chrome-control）可在此注册实时视图。当前未注册插件。</p>
+</div>
+</body></html>`
+
+// 桌面操作栏 HTML（委托 chrome-bar 模块，避免双份定义）
+function desktopToolbarHtml() {
+  try {
+    return require('./chrome-bar').desktopToolbarHtml()
+  } catch {
+    return '<!doctype html><html><body style="margin:0"></body></html>'
+  }
+}
+
 // ---- 状态 ----
 let view = null // browser contentView（底部内容区）
 let toolbarView = null // browser 标签地址栏（页签栏下方）
 let tabbarView = null // 通用页签栏（常驻面板顶部）
 let fsView = null // fs 标签目录树面板
 let prevView = null // prev 标签文件预览面板
+let pluginView = null // plugin 标签（插件面板槽位，如 dsh-chrome-control）
 let server = null // http.Server
 let bridgePort = 0
 let bridgeUrl = ''
 let panelBaseUrl = ''
 let backendUrl = ''
 let backendToken = '' // v0.1.2+ dsh web URL 携带的 ?token= 查询串（与 backendUrl 分离，供子路径请求附加）
-let currentTab = null // 'browser' | 'fs' | 'prev' | null（null=面板整体隐藏）
+let currentTab = null // 'browser' | 'fs' | 'prev' | 'plugin' | null（null=面板整体隐藏）
 let visible = false
 let toolbarLoaded = false
 let tabbarLoaded = false
 let fsLoaded = false
 let viewLoaded = false
+let pluginLoaded = false
 
-let lastInset = '' // 最近一次写入 dsh 页面的 paddingRight，仅值变化时写入一次。
+/** 面板状态（页签栏拖拽/全屏/分屏按钮调整，落盘持久化）。 */
+let dockWidth = DOCK_WIDTH
+let panelFullscreen = false // 面板全屏（占满整窗，dsh 页面右侧不再让位）
+let browserSplit = false // browser 标签：浏览器内容与插件视图上下分屏
+let desktopActions = {} // 桌面操作栏动作（index.js 注册：terminal/restart/devtools/panel/mode）
+
+let lastInsets = '' // 最近一次写入 dsh 页面的 insets 串（top x right），仅值变化时写入一次。
 let tabAnim = null // 标签切换过渡进行中标记：{ targetTab: string }
 
 /** 确保窗口与四个 WebContentsView 都存在（惰性创建，不加入 contentView）。 */
@@ -287,6 +353,7 @@ function ensureViews() {
   if (!tabbarView) tabbarView = new WebContentsView({ webPreferences: { sandbox: false, contextIsolation: true } })
   if (!fsView) fsView = new WebContentsView({ webPreferences: { sandbox: false, contextIsolation: true } })
   if (!prevView) prevView = new WebContentsView({ webPreferences: { sandbox: false, contextIsolation: true } })
+  if (!pluginView) pluginView = new WebContentsView({ webPreferences: { sandbox: false, contextIsolation: true } })
   return win
 }
 
@@ -305,22 +372,36 @@ function hidePanelViews() {
   removeIfAdded(view)
   removeIfAdded(fsView)
   removeIfAdded(prevView)
+  removeIfAdded(pluginView)
 }
 
-/** [1] 布局补偿：面板任一标签可见时，让 dsh 主页面在右侧让出 DOCK 宽度。仅值变化时写入一次。 */
-async function applyPageInset(anyVisible) {
+/** 计算 dsh 主页面应让出的 insets（top=桌面操作栏，right=面板宽度）。 */
+function currentInsets() {
+  const win = getWindow()
+  const b = win && !win.isDestroyed() ? win.getContentBounds() : null
+  const top = getChromeHeight()
+  const right = visible && !panelFullscreen ? Math.min(dockWidth, b ? b.width : dockWidth) : 0
+  return { top, right }
+}
+
+/**
+ * 布局补偿：extended/advanced 模式让出顶部操作栏高度；面板可见时让出右侧 dock 宽度。
+ * 仅值变化时写入一次（防 resize 风暴）。
+ */
+async function applyPageInsets() {
   const win = getWindow()
   if (!win || win.isDestroyed()) return
-  const value = anyVisible ? `${DOCK_WIDTH}px` : '0px'
   if (!win.webContents || typeof win.webContents.executeJavaScript !== 'function') return
-  if (value === lastInset) return
-  lastInset = value
+  const { top, right } = currentInsets()
+  const key = `${top}x${right}`
+  if (key === lastInsets) return
+  lastInsets = key
   try {
     await win.webContents.executeJavaScript(
-      `(() => { if (document && document.documentElement) document.documentElement.style.paddingRight = ${JSON.stringify(value)}; })()`
+      `(() => { const d = document && document.documentElement; if (!d) return; d.style.paddingTop = ${JSON.stringify(top + 'px')}; d.style.paddingRight = ${JSON.stringify(right + 'px')}; })()`
     )
   } catch (e) {
-    lastInset = '' // 写入失败则允许下次重试
+    lastInsets = '' // 写入失败则允许下次重试
   }
 }
 
@@ -349,35 +430,77 @@ function tabViewsFor(id) {
   if (id === 'browser') return [tabbarView, toolbarView, view]
   if (id === 'fs') return [tabbarView, fsView]
   if (id === 'prev') return [tabbarView, prevView]
+  if (id === 'plugin') return [tabbarView, pluginView]
   return []
 }
 
-/** 摆放当前标签到窗口右侧（resize 时调用）。 */
+/**
+ * 纯函数：按窗口 bounds 与面板状态计算各视图 bounds（便于单测）。
+ * @param b - win.getContentBounds()
+ * @param state - { chromeTop, dockWidth, panelFullscreen, browserSplit, currentTab, visible, pluginAvailable }
+ * @returns { dock:{x,y,w,h}, insets:{top,right}, split:boolean }
+ */
+function computeLayout(b, state) {
+  const top = Math.max(0, state.chromeTop || 0)
+  const full = !!state.panelFullscreen
+  const maxW = Math.max(DOCK_MIN_WIDTH, Math.round(b.width * DOCK_MAX_RATIO))
+  const dockW = full ? b.width : Math.max(DOCK_MIN_WIDTH, Math.min(state.dockWidth, maxW))
+  const right = b.width - dockW
+  return {
+    dock: { x: right, y: top, w: dockW, h: Math.max(0, b.height - top) },
+    insets: { top, right: full ? 0 : (state.visible ? dockW : 0) },
+    split: !!state.browserSplit && state.currentTab === 'browser' && !!state.pluginAvailable,
+  }
+}
+
+/** 摆放当前标签到窗口右侧（resize/模式/宽度/全屏变化时调用）。 */
 function layoutPanel() {
   const win = getWindow()
   if (!win || win.isDestroyed()) return
   const b = win.getContentBounds()
-  const right = Math.max(0, b.width - DOCK_WIDTH)
-  const width = DOCK_WIDTH
-  const height = b.height
-  if (currentTab === 'browser') {
-    // 顶部页签栏 40，其下地址栏 44，再下为浏览器内容区。
-    tabbarView.setBounds({ x: right, y: 0, width, height: TAB_BAR_H })
-    toolbarView.setBounds({ x: right, y: TAB_BAR_H, width, height: TOOLBAR_H })
-    view.setBounds({ x: right, y: TAB_BAR_H + TOOLBAR_H, width, height: Math.max(0, height - TAB_BAR_H - TOOLBAR_H) })
-  } else if (currentTab === 'fs') {
-    tabbarView.setBounds({ x: right, y: 0, width, height: TAB_BAR_H })
-    fsView.setBounds({ x: right, y: TAB_BAR_H, width, height: Math.max(0, height - TAB_BAR_H) })
-  } else if (currentTab === 'prev') {
-    tabbarView.setBounds({ x: right, y: 0, width, height: TAB_BAR_H })
-    prevView.setBounds({ x: right, y: TAB_BAR_H, width, height: Math.max(0, height - TAB_BAR_H) })
+  const L = computeLayout(b, {
+    chromeTop: getChromeHeight(),
+    dockWidth,
+    panelFullscreen,
+    browserSplit,
+    currentTab,
+    visible,
+    pluginAvailable: pluginView !== null,
+  })
+  const { x, y, w, h } = L.dock
+  if (!visible) {
+    applyPageInsets()
+    return
   }
+  if (currentTab === 'browser') {
+    tabbarView.setBounds({ x, y, width: w, height: TAB_BAR_H })
+    toolbarView.setBounds({ x, y: y + TAB_BAR_H, width: w, height: TOOLBAR_H })
+    const contentH = h - TAB_BAR_H - TOOLBAR_H
+    if (L.split) {
+      // 上下分屏：浏览器内容上半、插件视图下半
+      const half = Math.round(contentH / 2)
+      view.setBounds({ x, y: y + TAB_BAR_H + TOOLBAR_H, width: w, height: half })
+      pluginView.setBounds({ x, y: y + TAB_BAR_H + TOOLBAR_H + half, width: w, height: contentH - half })
+    } else {
+      view.setBounds({ x, y: y + TAB_BAR_H + TOOLBAR_H, width: w, height: Math.max(0, contentH) })
+    }
+  } else if (currentTab === 'fs') {
+    tabbarView.setBounds({ x, y, width: w, height: TAB_BAR_H })
+    fsView.setBounds({ x, y: y + TAB_BAR_H, width: w, height: Math.max(0, h - TAB_BAR_H) })
+  } else if (currentTab === 'prev') {
+    tabbarView.setBounds({ x, y, width: w, height: TAB_BAR_H })
+    prevView.setBounds({ x, y: y + TAB_BAR_H, width: w, height: Math.max(0, h - TAB_BAR_H) })
+  } else if (currentTab === 'plugin') {
+    tabbarView.setBounds({ x, y, width: w, height: TAB_BAR_H })
+    if (pluginView) pluginView.setBounds({ x, y: y + TAB_BAR_H, width: w, height: Math.max(0, h - TAB_BAR_H) })
+  }
+  applyPageInsets()
 }
 
 /** 页签切换后刷新页签栏高亮（executeJavaScript 设 active 类，避免重载闪烁）。 */
 function refreshTabbarHighlight(tab) {
   if (!tabbarView || !tabbarView.webContents) return
-  const valid = (['browser', 'fs', 'prev'].indexOf(tab) !== -1) ? tab : 'browser'
+  const valid = (['browser', 'fs', 'prev', 'plugin'].indexOf(tab) !== -1) ? tab : 'browser'
   try {
     tabbarView.webContents.executeJavaScript(
       `(function(){document.querySelectorAll('.rpn_tab').forEach(function(b){b.classList.toggle('active', b.getAttribute('data-tab')===${JSON.stringify(valid)});});})()`
@@ -385,13 +508,13 @@ function refreshTabbarHighlight(tab) {
   } catch (e) { /* 页面可能尚未加载完成，忽略 */ }
 }
 
-/** 切换到指定标签（'browser' | 'fs' | 'prev'）：平滑过渡，当前可见标签淡出后再切、新标签淡入。 */
+/** 切换到指定标签（'browser' | 'fs' | 'prev' | 'plugin'）：平滑过渡，当前可见标签淡出后再切、新标签淡入。 */
 function showTab(id) {
   const win = ensureViews()
   if (!win) return
   const tab = String(id || 'browser')
   // 无效标签：等价于整体隐藏。
-  if (['browser', 'fs', 'prev'].indexOf(tab) === -1) { setVisible(false); return }
+  if (['browser', 'fs', 'prev', 'plugin'].indexOf(tab) === -1) { setVisible(false); return }
   // 已在目标标签且面板可见，且无进行中的切换 → 无操作。
   if (currentTab === tab && visible && !tabAnim) return
   // 记录目标；若已有切换进行中则按新目标继续（淡出完成后重算）。
@@ -401,7 +524,7 @@ function showTab(id) {
 
 function runTabTransition(win) {
   if (!tabAnim) return
-  const own = [tabbarView, toolbarView, view, fsView, prevView]
+  const own = [tabbarView, toolbarView, view, fsView, prevView, pluginView]
   const cur = win.contentView.children.filter((c) => own.indexOf(c) !== -1)
   const onDone = () => {
     if (!tabAnim) return // 期间已被 setVisible(false) 取消
@@ -409,10 +532,10 @@ function runTabTransition(win) {
     cur.forEach((c) => { if (win.contentView.children.indexOf(c) !== -1) win.contentView.removeChildView(c) })
     const focus = tabAnim.targetTab
     tabAnim = null
-    if (['browser', 'fs', 'prev'].indexOf(focus) === -1) {
+    if (['browser', 'fs', 'prev', 'plugin'].indexOf(focus) === -1) {
       currentTab = null
       visible = false
-      applyPageInset(false)
+      applyPageInsets()
       console.log('[dsh-gui] browser panel HIDE')
       return
     }
@@ -431,9 +554,12 @@ function runTabTransition(win) {
       win.contentView.addChildView(fsView)
     } else if (focus === 'prev') {
       win.contentView.addChildView(prevView)
+    } else if (focus === 'plugin') {
+      if (!pluginLoaded) { pluginLoaded = true; pluginView.webContents.loadURL(panelBaseUrl + '/panel/plugin') }
+      win.contentView.addChildView(pluginView)
     }
     layoutPanel()
-    applyPageInset(true)
+    applyPageInsets()
     // 刷新页签栏高亮，跟随当前标签。
     refreshTabbarHighlight(focus)
     // 新标签淡入（第一次从全隐藏显示也用淡入）。
@@ -457,7 +583,7 @@ function setVisible(on) {
     hidePanelViews()
     currentTab = null
     visible = false
-    applyPageInset(false)
+    applyPageInsets()
     console.log('[dsh-gui] browser panel HIDE')
   }
 }
@@ -581,8 +707,8 @@ function handleRest(req, res) {
   const pathname = parsed.pathname
   const method = (req.method || 'GET').toUpperCase()
 
-  // GET /panel/<name>（name ∈ fs|prev|toolbar|start）
-  const panelMatch = /^\/panel\/([A-Za-z0-9]+?)(?:\.html)?$/.exec(pathname)
+  // GET /panel/<name>（name ∈ fs|prev|toolbar|tabbar|start|plugin|desktop-toolbar）
+  const panelMatch = /^\/panel\/([A-Za-z0-9-]+?)(?:\.html)?$/.exec(pathname)
   if (panelMatch) {
     const name = panelMatch[1]
     if (name === 'toolbar') return sendHtml(res, 200, TOOLBAR_HTML)
@@ -590,7 +716,15 @@ function handleRest(req, res) {
     if (name === 'fs') return sendHtml(res, 200, FS_HTML)
     if (name === 'prev') return sendHtml(res, 200, PREV_HTML)
     if (name === 'start') return sendHtml(res, 200, START_HTML)
+    if (name === 'plugin') return sendHtml(res, 200, PLUGIN_HTML)
+    if (name === 'desktop-toolbar') return sendHtml(res, 200, desktopToolbarHtml())
     return sendJson(res, 404, { ok: false, error: 'unknown panel' })
+  }
+
+  // GET /state：面板页签栏同步宽度/全屏/分屏状态。
+  if (pathname === '/state' && method === 'GET') {
+    sendJson(res, 200, { width: dockWidth, full: panelFullscreen, split: browserSplit })
+    return
   }
 
   // GET /fs/tree?path=<absDir>
@@ -658,7 +792,47 @@ function handleRest(req, res) {
   if (pathname === '/action/tab' && method === 'POST') {
     readBody(req).then((body) => {
       const tab = String((body && body.tab) || '')
-      if (['browser', 'fs', 'prev'].indexOf(tab) !== -1) showTab(tab)
+      if (['browser', 'fs', 'prev', 'plugin'].indexOf(tab) !== -1) showTab(tab)
+      sendJson(res, 200, { ok: true })
+    })
+    return
+  }
+
+  // POST /action/resize body {width}：拖拽条调整面板宽度（落盘持久化）。
+  if (pathname === '/action/resize' && method === 'POST') {
+    readBody(req).then((body) => {
+      const w = Number((body && body.width) || 0)
+      if (w > 0) setDockWidth(w)
+      sendJson(res, 200, { ok: true, width: dockWidth })
+    })
+    return
+  }
+
+  // POST /action/fullscreen：面板全屏/还原。
+  if (pathname === '/action/fullscreen' && method === 'POST') {
+    panelFullscreen = !panelFullscreen
+    layoutPanel()
+    sendJson(res, 200, { ok: true, full: panelFullscreen })
+    return
+  }
+
+  // POST /action/split：browser 标签下浏览器/插件上下分屏。
+  if (pathname === '/action/split' && method === 'POST') {
+    browserSplit = !browserSplit
+    if (currentTab === 'plugin' && browserSplit) showTab('browser')
+    layoutPanel()
+    sendJson(res, 200, { ok: true, split: browserSplit })
+    return
+  }
+
+  // POST /action/desktop body {cmd, ...args}：桌面操作栏按钮动作（index.js 注册）。
+  if (pathname === '/action/desktop' && method === 'POST') {
+    readBody(req).then((body) => {
+      const cmd = String((body && body.cmd) || '')
+      const fn = desktopActions[cmd]
+      if (typeof fn === 'function') {
+        try { fn(body || {}) } catch (e) { console.error('[dsh-gui] 桌面动作失败:', e) }
+      }
       sendJson(res, 200, { ok: true })
     })
     return
@@ -779,6 +953,7 @@ function disposeBrowserBridge() {
   try { if (tabbarView) { tabbarView.webContents?.close?.(); tabbarView = null } } catch { /* noop */ }
   try { if (fsView) { fsView.webContents?.close?.(); fsView = null } } catch { /* noop */ }
   try { if (prevView) { prevView.webContents?.close?.(); prevView = null } } catch { /* noop */ }
+  try { if (pluginView) { pluginView.webContents?.close?.(); pluginView = null } } catch { /* noop */ }
   try { if (server) { server.close(); server = null } } catch { /* noop */ }
 }
 
@@ -787,6 +962,41 @@ function toggleVisible() {
   if (currentTab) setVisible(false)
   else setVisible(true)
   return { visible: !!currentTab }
+}
+
+/** 调整面板宽度（含下限/上限约束）并落盘持久化。 */
+function setDockWidth(w) {
+  const win = getWindow()
+  const maxW = win && !win.isDestroyed() ? Math.round(win.getContentBounds().width * DOCK_MAX_RATIO) : DOCK_WIDTH
+  dockWidth = Math.max(DOCK_MIN_WIDTH, Math.min(maxW, Math.round(Number(w) || DOCK_WIDTH)))
+  layoutPanel()
+  try {
+    require('./settings').saveSettings({ dockWidth })
+  } catch { /* 持久化失败不影响本次布局 */ }
+}
+
+/**
+ * 插件面板槽位：注册插件实时视图的加载 URL。
+ * @param name - 插件名（如 'dsh-chrome-control'）
+ * @param url - 面板 URL；传 null/空则回退占位页
+ */
+function registerPanelView(name, url) {
+  ensureViews()
+  const target = url ? String(url) : ''
+  if (target) pluginView.webContents.loadURL(target)
+  else pluginView.webContents.loadURL(panelBaseUrl + '/panel/plugin')
+  pluginLoaded = true
+  console.log(`[dsh-gui] plugin panel ${target ? 'registered: ' + name : 'reset'}`)
+}
+
+/** 注册桌面操作栏动作（index.js 提供 terminal/restart/devtools/panel/mode）。 */
+function setDesktopActions(actions) {
+  desktopActions = actions || {}
+}
+
+/** 面板状态快照（供外部查询/持久化）。 */
+function getPanelState() {
+  return { dockWidth, panelFullscreen, browserSplit, currentTab, visible }
 }
 
 module.exports = {
@@ -798,5 +1008,10 @@ module.exports = {
   showTab,
   layoutPanel,
   disposeBrowserBridge,
+  registerPanelView,
+  setDockWidth,
+  setDesktopActions,
+  getPanelState,
+  computeLayout,
   DOCK_WIDTH,
 }

@@ -6,8 +6,12 @@
 const path = require('node:path')
 const fs = require('node:fs')
 const { BrowserWindow } = require('electron')
+const { buildWindowOptions, chromeHeight } = require('./window-chrome')
 
 let win = null
+// 当前呈现模式/材质（createWindow 时记录，供 getChromeHeight 与页面 inset 使用）。
+let currentMode = 'compatibility'
+let currentMaterial = 'off'
 
 // 渲染进程最近一次异常（崩溃/卡死）的时间戳，用于区分「异常关闭→重建窗口」
 // 与「用户正常关闭窗口→退出应用」：异常后短时间内窗口被销毁视为异常场景。
@@ -29,17 +33,36 @@ function consumeRecentAbnormal(maxAgeMs = 5000) {
   return recent
 }
 
+/** 解析 Windows build 号（供 mica 材质判定）。 */
+function windowsBuildNumber() {
+  try {
+    const v = process.getSystemVersion?.() || ''
+    const m = /(\d+)\.(\d+)\.(\d+)/.exec(v)
+    return m ? Number(m[3]) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** 创建并加载 dsh Web 界面的主窗口。 */
-function createWindow(url) {
+function createWindow(url, settings = {}) {
+  currentMode = settings.presentationMode === 'advanced'
+    ? 'advanced'
+    : settings.presentationMode === 'extended'
+      ? 'extended'
+      : 'compatibility'
+  currentMaterial = settings.material === 'mica' ? 'mica'
+    : settings.material === 'transparent' ? 'transparent'
+      : 'off'
   // 打包后 Windows 用 exe 自带图标；开发模式用 resources/icon.png（文件不存在时忽略）
   const icon = path.join(__dirname, '..', 'resources', 'icon.png')
   win = new BrowserWindow({
+    ...buildWindowOptions(currentMode, currentMaterial, process.platform, windowsBuildNumber()),
     width: 1280,
     height: 820,
     minWidth: 900,
     minHeight: 600,
     title: 'DSH Desktop',
-    autoHideMenuBar: true,
     backgroundColor: '#0f1117',
     icon: fs.existsSync(icon) ? icon : undefined,
     webPreferences: {
@@ -91,9 +114,14 @@ function focusWindow() {
   }
 }
 
-/** 当前主窗口（可能为 null）。 */
+/** 当前窗口（可能为 null）。 */
 function getWindow() {
   return win
 }
 
-module.exports = { createWindow, focusWindow, getWindow, consumeRecentAbnormal }
+/** 当前标题栏高度（px，compat/Linux=0；供页面 paddingTop 与操作栏布局）。 */
+function getChromeHeight() {
+  return chromeHeight(currentMode, process.platform)
+}
+
+module.exports = { createWindow, focusWindow, getWindow, consumeRecentAbnormal, getChromeHeight }

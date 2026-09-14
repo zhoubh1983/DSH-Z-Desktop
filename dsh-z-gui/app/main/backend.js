@@ -85,6 +85,7 @@ const BUILTIN_PLUGINS = [
   'dsh-chrome-control',
   'dsh-conversation-tools',
   'dsh-browser-control',
+  'dsh-desktop-frame',
 ]
 
 /**
@@ -384,4 +385,15 @@ function stopBackend() {
   }
 }
 
-module.exports = { startBackend, stopBackend }
+/**
+ * 重启后端子进程（操作栏/托盘「重启」用）：停止当前进程、重置重启计数后重新 boot，
+ * 返回新的 { url, port }。
+ */
+async function restartBackend(bridgeUrl = '') {
+  stopBackend()
+  restartCount = 0
+  webUrl = ''
+  return startBackend(bridgeUrl)
+}
+
+module.exports = { startBackend, stopBackend, restartBackend }
