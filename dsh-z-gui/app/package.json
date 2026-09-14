@@ -11,11 +11,13 @@
     "start": "electron .",
     "pack": "electron-builder",
     "pack:win": "electron-builder --win --x64",
-    "pack:linux": "electron-builder --linux --x64"
+    "pack:linux": "electron-builder --linux --x64",
+    "build:titlebar": "node scripts/build-titlebar.mjs"
   },
   "devDependencies": {
     "electron": "^44.0.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0"

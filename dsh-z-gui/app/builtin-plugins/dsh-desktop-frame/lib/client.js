@@ -1,20 +1,136 @@
-/**
- * dsh-desktop-frame 客户端：在 dsh web 页面渲染官方同款桌面标题栏（extended/advanced 模式）。
- * 零构建、原生 DOM（与 dsh-browser-control 一致）。
- *
- * 标题栏结构（对齐官方 DesktopFrameTitlebarView）：
- *   - 身份区（居中）：产品名 + 版本号 + 模式 pill（点击弹三模式选择）
- *   - 动作区：终端 / 重启 / 开发者工具
- * 动作经 preload 暴露的 window.dshGui.desktop.action(cmd) → 主进程执行。
- * extended/advanced 时注入标题栏 + 内容 top inset；compatibility 不注入。
- */
-window.__ModuleLoader__.load({ id: 'dsh-desktop-frame', factory: (require) => {
-  const module = { exports: {} }
-  const exports = module.exports
+window.__ModuleLoader__.load({
+  id: 'dsh-desktop-frame',
+  factory: (require) => {
+    const module = { exports: {} }
+    const exports = module.exports
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name2 in all)
+    __defProp(target, name2, { get: all[name2], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-  const TITLEBAR_HEIGHT = 36
-  const ADVANCED_HEIGHT = 32
-  const TITLEBAR_CSS = `
+// dsh-z-gui/app/client-src/desktop-titlebar/index.tsx
+var index_exports = {};
+__export(index_exports, {
+  apply: () => apply,
+  name: () => name
+});
+module.exports = __toCommonJS(index_exports);
+var import_client = require("react-dom/client");
+
+// dsh-z-gui/app/client-src/desktop-titlebar/TitlebarView.tsx
+var import_react = require("react");
+var import_jsx_runtime = require("react/jsx-runtime");
+var MODE_LABEL = {
+  compatibility: "\u517C\u5BB9\u6A21\u5F0F",
+  extended: "\u6269\u5C55\u6A21\u5F0F",
+  advanced: "\u589E\u5F3A\u6A21\u5F0F"
+};
+var MODE_OPTS = [
+  { m: "compatibility", title: "\u517C\u5BB9", body: "\u4FDD\u7559\u539F\u751F\u7CFB\u7EDF\u6807\u9898\u680F" },
+  { m: "extended", title: "\u6269\u5C55", body: "36px \u684C\u9762\u6807\u9898\u680F + \u4E09\u680F\u5E03\u5C40" },
+  { m: "advanced", title: "\u589E\u5F3A", body: "32px \u7D27\u51D1\u6807\u9898\u680F" }
+];
+function desktopAction(cmd, payload) {
+  window.dshGui?.desktop?.action(cmd, payload || {});
+}
+function TitlebarView({ state }) {
+  const [menuOpen, setMenuOpen] = (0, import_react.useState)(false);
+  const modeWrapRef = (0, import_react.useRef)(null);
+  (0, import_react.useEffect)(() => {
+    const onDown = (ev) => {
+      if (modeWrapRef.current !== null && !modeWrapRef.current.contains(ev.target)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+  const mode = state.mode === "advanced" || state.mode === "extended" ? state.mode : "compatibility";
+  const bindModeToggle = (el) => {
+    if (!el) return;
+    el.addEventListener("click", () => setMenuOpen((open) => !open));
+  };
+  const bindModeOpt = (m) => (el) => {
+    if (!el) return;
+    el.addEventListener("click", () => {
+      setMenuOpen(false);
+      desktopAction("mode", { mode: m });
+    });
+  };
+  const bindAction = (cmd) => (el) => {
+    if (!el) return;
+    el.addEventListener("click", () => desktopAction(cmd));
+  };
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    "header",
+    {
+      className: "dshDesktopFrameTitlebar",
+      "data-platform": state.platform || "win32",
+      "data-mode": mode,
+      "data-material": state.material || "off",
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dshDesktopFrameIdentity", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "dshDesktopFrameProduct", children: "DSH Desktop" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "dshDesktopFrameVersion", title: `DSH Desktop ${state.version || ""}`, children: `v${state.version || "0.1.0"}` }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dshDesktopFrameModeWrap", ref: modeWrapRef, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "button",
+              {
+                type: "button",
+                className: "dshDesktopFrameMode",
+                "aria-haspopup": "menu",
+                ref: bindModeToggle,
+                children: MODE_LABEL[mode] || mode
+              }
+            ),
+            menuOpen && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dshDesktopModeMenu", role: "menu", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "dshDesktopModeMenuHead", children: "\u5207\u6362\u5448\u73B0\u6A21\u5F0F" }),
+              MODE_OPTS.filter((o) => o.m !== mode).map((o) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                "button",
+                {
+                  type: "button",
+                  className: "dshDesktopModeOpt",
+                  ref: bindModeOpt(o.m),
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: o.title }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: o.body })
+                  ]
+                },
+                o.m
+              ))
+            ] })
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dshDesktopFrameActions", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "dshDesktopTitlebarIconButton", title: "\u6253\u5F00 DSH \u7EC8\u7AEF", "aria-label": "\u6253\u5F00 DSH \u7EC8\u7AEF", ref: bindAction("terminal"), children: "\u276F_" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "dshDesktopTitlebarIconButton", title: "\u91CD\u542F\u540E\u7AEF", "aria-label": "\u91CD\u542F\u540E\u7AEF", ref: bindAction("restart"), children: "\u27F3" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "dshDesktopTitlebarIconButton", title: "\u5F00\u53D1\u8005\u5DE5\u5177", "aria-label": "\u5F00\u53D1\u8005\u5DE5\u5177", ref: bindAction("devtools"), children: "\u2699" })
+        ] })
+      ]
+    }
+  );
+}
+
+// dsh-z-gui/app/client-src/desktop-titlebar/index.tsx
+var import_jsx_runtime2 = require("react/jsx-runtime");
+var TITLEBAR_HEIGHT = 36;
+var ADVANCED_HEIGHT = 32;
+var CSS_ID = "dsh-desktop-frame-css";
+var ROOT_ID = "dsh-desktop-frame-root";
+var TITLEBAR_CSS = `
 .dshDesktopFrameTitlebar{position:fixed;z-index:2147483647;top:0;right:0;left:0;display:flex;align-items:center;box-sizing:border-box;height:${TITLEBAR_HEIGHT}px;background:#0f1117;color:#e5e7eb;user-select:none;-webkit-app-region:drag;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI","PingFang SC",sans-serif}
 .dshDesktopFrameTitlebar[data-platform="win32"]{padding:0 142px 0 10px}
 .dshDesktopFrameTitlebar[data-platform="darwin"]{padding:0 10px 0 88px}
@@ -25,178 +141,66 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-frame', factory: (require) => {
 .dshDesktopFrameMode{display:inline-flex;align-items:center;min-height:22px;padding:2px 8px;border:1px solid rgba(255,255,255,.14);border-radius:999px;background:rgba(255,255,255,.08);color:#cbd5e1;cursor:pointer;font:inherit;font-size:11px;white-space:nowrap;pointer-events:auto;-webkit-app-region:no-drag}
 .dshDesktopFrameMode:hover{background:rgba(255,255,255,.16);color:#e5e7eb}
 .dshDesktopFrameModeWrap{position:relative;pointer-events:auto}
-.dshDesktopModeMenu{position:absolute;z-index:2147483647;top:calc(100% + 5px);left:0;display:none;min-width:230px;padding:5px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:#1b1f27;box-shadow:0 12px 32px rgba(0,0,0,.4);-webkit-app-region:no-drag}
-.dshDesktopModeMenu[data-open="true"]{display:grid;gap:3px}
+.dshDesktopModeMenu{position:absolute;z-index:2147483647;top:calc(100% + 5px);left:0;min-width:230px;padding:5px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:#1b1f27;box-shadow:0 12px 32px rgba(0,0,0,.4);display:grid;gap:3px;-webkit-app-region:no-drag}
 .dshDesktopModeMenuHead{color:#9ca3af;font-size:11px;font-weight:600;padding:4px 8px 6px}
 .dshDesktopModeOpt{display:grid;gap:2px;width:100%;padding:7px 9px;border:0;border-radius:7px;background:transparent;color:#e5e7eb;cursor:pointer;text-align:left;font:inherit}
 .dshDesktopModeOpt:hover{background:rgba(255,255,255,.1)}
-.dshDesktopModeOpt[data-current="true"]{background:rgba(255,255,255,.08)}
 .dshDesktopModeOpt strong{font-size:12px;font-weight:600}
 .dshDesktopModeOpt small{color:#9ca3af;font-size:10px;line-height:1.35}
 .dshDesktopFrameActions{display:flex;align-items:center;gap:4px;pointer-events:none}
 .dshDesktopTitlebarIconButton{display:inline-flex;align-items:center;justify-content:center;width:28px;height:26px;padding:0;border:1px solid transparent;border-radius:7px;background:rgba(255,255,255,.06);color:#cbd5e1;cursor:pointer;font-size:13px;line-height:1;pointer-events:auto;-webkit-app-region:no-drag}
 .dshDesktopTitlebarIconButton:hover{background:rgba(255,255,255,.14);color:#e5e7eb}
-body[data-dsh-desktop-frame="on"] #root{padding-top:${TITLEBAR_HEIGHT}px}
+body[data-dsh-desktop-frame="on"]{overflow:hidden}
+body[data-dsh-desktop-frame="on"] #root{box-sizing:border-box;height:100%;overflow:hidden;padding-top:${TITLEBAR_HEIGHT}px}
 body[data-dsh-desktop-frame="on"][data-dsh-desktop-height="advanced"] #root{padding-top:${ADVANCED_HEIGHT}px}
 body[data-dsh-desktop-frame="on"][data-dsh-desktop-height="advanced"] .dshDesktopFrameTitlebar{height:${ADVANCED_HEIGHT}px}
-@media (prefers-color-scheme: dark){}
-`
-
-  let titlebar = null
-  let mode = 'compatibility'
-
-  /** 向主进程发动作（经 preload IPC）。 */
-  function action(cmd, payload) {
-    if (window.dshGui && window.dshGui.desktop && typeof window.dshGui.desktop.action === 'function') {
-      window.dshGui.desktop.action(cmd, payload || {})
-    }
+`;
+function injectCss() {
+  if (document.getElementById(CSS_ID)) return;
+  const style = document.createElement("style");
+  style.id = CSS_ID;
+  style.textContent = TITLEBAR_CSS;
+  document.head.appendChild(style);
+}
+function ensureRoot() {
+  let el = document.getElementById(ROOT_ID);
+  if (!el) {
+    el = document.createElement("div");
+    el.id = ROOT_ID;
+    document.body.appendChild(el);
   }
-
-  /** 模式中文名。 */
-  function modeLabel(m) {
-    return m === 'advanced' ? '增强模式' : m === 'extended' ? '扩展模式' : '兼容模式'
-  }
-
-  /** 构建标题栏 DOM（仿官方 DesktopFrameTitlebarView）。 */
-  function buildTitlebar(state) {
-    const header = document.createElement('header')
-    header.className = 'dshDesktopFrameTitlebar'
-    header.dataset.platform = state.platform || 'win32'
-    header.dataset.mode = mode
-    header.dataset.material = state.material || 'off'
-
-    const identity = document.createElement('div')
-    identity.className = 'dshDesktopFrameIdentity'
-    const product = document.createElement('span')
-    product.className = 'dshDesktopFrameProduct'
-    product.textContent = 'DSH Desktop'
-    const version = document.createElement('span')
-    version.className = 'dshDesktopFrameVersion'
-    version.textContent = 'v' + (state.version || '0.1.0')
-    version.title = 'DSH Desktop ' + (state.version || '0.1.0')
-    identity.appendChild(product)
-    identity.appendChild(version)
-
-    // 模式 pill + 三模式菜单（仿官方 DesktopModeControl）。
-    const modeWrap = document.createElement('div')
-    modeWrap.className = 'dshDesktopFrameModeWrap'
-    const pill = document.createElement('button')
-    pill.type = 'button'
-    pill.className = 'dshDesktopFrameMode'
-    pill.textContent = modeLabel(mode)
-    pill.setAttribute('aria-haspopup', 'menu')
-    pill.addEventListener('click', (ev) => {
-      ev.stopPropagation()
-      menu.dataset.open = menu.dataset.open === 'true' ? 'false' : 'true'
-    })
-    const menu = document.createElement('div')
-    menu.className = 'dshDesktopModeMenu'
-    menu.dataset.open = 'false'
-    menu.setAttribute('role', 'menu')
-    const head = document.createElement('div')
-    head.className = 'dshDesktopModeMenuHead'
-    head.textContent = '切换呈现模式'
-    menu.appendChild(head)
-    const opts = [
-      { m: 'compatibility', title: '兼容', body: '保留原生系统标题栏' },
-      { m: 'extended', title: '扩展', body: '36px 桌面标题栏 + 三栏布局' },
-      { m: 'advanced', title: '增强', body: '32px 紧凑标题栏' },
-    ]
-    for (const o of opts) {
-      const btn = document.createElement('button')
-      btn.type = 'button'
-      btn.className = 'dshDesktopModeOpt'
-      btn.dataset.mode = o.m
-      btn.dataset.current = o.m === mode ? 'true' : 'false'
-      const strong = document.createElement('strong')
-      strong.textContent = o.title
-      const small = document.createElement('small')
-      small.textContent = o.body
-      btn.appendChild(strong)
-      btn.appendChild(small)
-      btn.addEventListener('click', () => {
-        if (o.m !== mode) action('mode', { mode: o.m })
-        menu.dataset.open = 'false'
-      })
-      menu.appendChild(btn)
-    }
-    modeWrap.appendChild(pill)
-    modeWrap.appendChild(menu)
-    // 点击别处关闭菜单。
-    document.addEventListener('mousedown', (ev) => {
-      if (!modeWrap.contains(ev.target)) menu.dataset.open = 'false'
-    })
-    identity.appendChild(modeWrap)
-
-    // 动作区（仿官方 DesktopNativeActions 标题栏版）。
-    const actions = document.createElement('div')
-    actions.className = 'dshDesktopFrameActions'
-    const mkBtn = (title, label, cmd) => {
-      const b = document.createElement('button')
-      b.type = 'button'
-      b.className = 'dshDesktopTitlebarIconButton'
-      b.title = title
-      b.setAttribute('aria-label', title)
-      b.textContent = label
-      b.addEventListener('click', () => action(cmd))
-      return b
-    }
-    actions.appendChild(mkBtn('打开 DSH 终端', '❯_', 'terminal'))
-    actions.appendChild(mkBtn('重启后端', '⟳', 'restart'))
-    actions.appendChild(mkBtn('开发者工具', '⚙', 'devtools'))
-
-    header.appendChild(identity)
-    header.appendChild(actions)
-    return header
-  }
-
-  /** 应用标题栏：按模式注入 DOM + 样式 + 内容 inset。 */
-  function applyFrame(state) {
-    mode = state.mode === 'advanced' ? 'advanced' : state.mode === 'extended' ? 'extended' : 'compatibility'
-    // 样式一次性注入。
-    if (!document.getElementById('dsh-desktop-frame-css')) {
-      const style = document.createElement('style')
-      style.id = 'dsh-desktop-frame-css'
-      style.textContent = TITLEBAR_CSS
-      document.head.appendChild(style)
-    }
-    document.body.dataset.dshDesktopFrame = mode === 'compatibility' ? 'off' : 'on'
-    document.body.dataset.dshDesktopHeight = mode === 'advanced' ? 'advanced' : 'extended'
-    if (mode === 'compatibility') {
-      if (titlebar) { titlebar.remove(); titlebar = null }
-      return
-    }
-    if (!titlebar) {
-      titlebar = buildTitlebar(state)
-      document.body.appendChild(titlebar)
-    } else {
-      // 更新 pill 文案（模式在重启前不变，此处兜底）。
-      const pill = titlebar.querySelector('.dshDesktopFrameMode')
-      if (pill) pill.textContent = modeLabel(mode)
-    }
-  }
-
-  /** 客户端插件入口：读主进程状态后应用标题栏。 */
-  function apply(ctx) {
-    const readState = () => {
-      if (window.dshGui && window.dshGui.desktop && typeof window.dshGui.desktop.getState === 'function') {
-        return Promise.resolve(window.dshGui.desktop.getState())
+  return el;
+}
+var rootInstance = null;
+var name = "dsh-desktop-frame-client";
+function apply() {
+  injectCss();
+  const boot = () => {
+    const get = window.dshGui?.desktop?.getState;
+    const promise = get ? get() : Promise.resolve({ mode: "compatibility", material: "off", platform: "win32", version: "0.1.0" });
+    promise.then((state) => {
+      const mode = state && (state.mode === "advanced" || state.mode === "extended") ? state.mode : "compatibility";
+      document.body.dataset.dshDesktopFrame = mode === "compatibility" ? "off" : "on";
+      document.body.dataset.dshDesktopHeight = mode === "advanced" ? "advanced" : "extended";
+      if (mode === "compatibility") {
+        if (rootInstance) {
+          rootInstance.unmount();
+          rootInstance = null;
+        }
+        return;
       }
-      return Promise.resolve({ mode: 'compatibility', material: 'off', platform: 'win32', version: '0.1.0' })
-    }
-    const boot = () => {
-      readState().then((state) => {
-        applyFrame(state || {})
-      }).catch(() => { /* 静默降级为兼容模式 */ })
-    }
-    // 页面 ready 后挂载（AppFrame 可能晚于本插件 apply，但 titlebar 是 fixed 不受影响）。
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', boot)
-    } else {
-      boot()
-    }
+      if (!rootInstance) rootInstance = (0, import_client.createRoot)(ensureRoot());
+      rootInstance.render(/* @__PURE__ */ (0, import_jsx_runtime2.jsx)(TitlebarView, { state }));
+    }).catch(() => {
+    });
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
   }
+}
 
-  module.exports = { name: 'dsh-desktop-frame-client', apply }
-  return module.exports
-} })
+    return module.exports
+  },
+})
