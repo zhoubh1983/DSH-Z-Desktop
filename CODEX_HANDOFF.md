@@ -323,3 +323,55 @@ python dsh-z-gui/scripts/ensure-portable-closure.py .
 - **必须把 `settings` 加入插件 `inject` 数组**（cordis 属性代理：未声明 inject 的服务访问 `ctx.settings` 抛「cannot get property without inject」）
 - 同步 profile 副本 + **重新打包**（win-unpacked/setup/portable 的 builtin-plugins 是打包时复制的旧版，不改装包即崩）
 - 冒烟验证（win-unpacked 实机）：dsh web 启动（日志 `dsh web: http://127.0.0.1:8885/?token=...`）、webhook 8787、`/chrome/status` 200 `running:true`（chrome-control daemon 正常）。最终产物 setup 328.4MB / portable 303.8MB（17:07）。
+
+---
+
+## 12. 本次会话交接（2026-09：0.1.5-rc.2 闭包 + 呈现模式框架 + 恢复体系 + 设置向导 + dsh-context 内置）
+
+> 交接日期：2026-09-14。分支 **`dev/0.1.0`**（0.1.0 开发线；`main` 保持 0.0.9 正式发行线）。本段覆盖：dsh-runtime 升级到 **v0.1.5-rc.2**、三栏呈现模式、页面内 React 标题栏、恢复体系、设置向导、终端/托盘补短板、dsh-context 内置化。8 个提交已推送 `origin/dev/0.1.0`。
+
+### 12.1 版本与分支
+- dsh-runtime 闭包：**v0.1.5-rc.2**（提交 d0e3153；`dsh --version` = `0.1.5-rc.2`）。升级流程沿用 4.4/11.1（`update-dsh.mjs` + `upgrade-dsh.mjs`）。
+- 分支：`dev/0.1.0`（version 0.1.0，`feat/browser-integration` 已并回/收敛，勿再往旧特性分支开发）。
+- 关键提交（本次推送 8 个）：`6ca2057` React 标题栏、`420a4f9` 自更新流水线+终端回退、`a4636df` 恢复体系+设置向导+dsh-context、`df19216` zod 补提交、另含 `d0e3153`/`6e636e1`/`bf4de87`/`ed0b63a`（0.1.5 闭包/三栏框架/移除自定义浮动面板/chrome-control v0.4.0）。
+
+### 12.2 呈现模式三栏框架（compatibility / extended / advanced）
+- `main/window-chrome.js`：三种模式的 BrowserWindow 选项（extended 36px / advanced 32px，win32 `titleBarStyle:hidden`+`titleBarOverlay`，darwin `hiddenInset`+红绿灯，mica 需 Win11 22621+）。
+- 设置持久化：`~/.dsh/gui/settings.json` 的 `presentationMode` / `material`（`main/settings.js`，含 UTF-8 BOM 容忍）。
+- 标题栏由内置插件 `dsh-desktop-frame` 渲染（页面内 `position:fixed`），模式/材质切换需重启生效（titleBarStyle 创建后不可改）。
+
+### 12.3 页面内 React 标题栏（重点坑）
+- 源码 `app/client-src/desktop-titlebar/`（TitlebarView.tsx + index.tsx），`app/scripts/build-titlebar.mjs` 用 **esbuild** 打成 CommonJS，再包 `window.__ModuleLoader__.load({ id:'dsh-desktop-frame', factory })` 写回 `builtin-plugins/dsh-desktop-frame/lib/client.js`。改标题栏后必须 `node app/scripts/build-titlebar.mjs` 重建。
+- ⚠️ **宿主内插件加载的 React 根，其合成事件委托失效**（同页 `#root` 的 React 正常、插件根的 `onClick` 完全不触发，手动 `dispatchEvent` 也不触发，但原生事件全链路正常；定位见 12.7）。**交互全部改用 ref 回调 + 原生 `addEventListener`**，状态仍由 React 管理。新增按钮照此模式写。
+- 动作经 preload `window.dshGui.desktop.action(cmd)` → 主进程 `desktop:action`。
+
+### 12.4 恢复体系（单 profile 版）
+- `main/recovery.js` + `native-ui/recovery.html`（零构建 vanilla JS，preload `native.js` 暴露 `dshNative.recovery.*`）。
+- **触发点**：①后端连续退出 3 次（`backend.js` 记录 `bootFailure`，`waitForReady` 快速失败）自动进入；②引导页 "Failed to load plugins" 时 `window.js` 注入「打开恢复模式」按钮（MutationObserver，调 `dshGui.desktop.action('recovery-open')`）；③托盘/操作栏「进入恢复模式」。
+- 能力：**安全模式**（备份 `package.json` 的 bundles/deps 到 `.dsh-safe-backup.json`，只留内置 bundle；退出恢复）｜**插件卸载**（非内置 bundle：删 bundle 项 + 依赖 + node_modules 目录）｜**恢复出厂**（profile 移到 `web.trash-<ts>` 不删，重建全新 profile + 重置设置）｜诊断导出（复用 `diagnostics.js`）｜重启/退出。
+- 判定内置：`BASE_BUNDLES` + `BUILTIN_PLUGINS`（后端导出），恢复助手内不可卸载。
+
+### 12.5 设置向导（首次启动）
+- `main/wizard.js`：`needsSetup()` = `profiles/web/package.json` 缺失 → 弹 `native-ui/wizard.html`（欢迎 → 呈现模式 → 窗口材质 → 完成）。
+- 完成：`saveSettings` + `ensureBuiltinPlugins()` 建 profile → `app.relaunch()` 重启生效。跳过=退出。
+- 单 profile 版不做数据目录/多 profile 切换（多 profile 后续按官方 `desktop-data-directory.ts` 的 `state.json` 定位器做）。
+
+### 12.6 内置 dsh-context（上下文仪表盘）
+- 来源：npm `dsh-context@0.52.0`（Apache-2.0），随包 vendored 到 `builtin-plugins/dsh-context/`（含嵌套 `node_modules/zod`，**自包含**）。
+- 接入：`BUILTIN_PLUGINS` 加 `'dsh-context'`（`backend.js`）；`ensureBuiltinPlugins` 自动同步 profile + 写 bundle 列表。启动后任意会话出现「上下文」tab（上下文统计/Token/耗时/当前上下文构成条/趋势/浏览器）。
+- ⚠️ **gitignore 陷阱**：`.gitignore` 有 `**/node_modules/`，`git add` 会**静默漏掉** vendored 的 zod——必须 `git add -f builtin-plugins/dsh-context/node_modules` 强制加入（提交 df19216）。
+- 升级：替换 `builtin-plugins/dsh-context/`（lib + cordis.patch.yml + package.json + node_modules/zod）即可，指纹机制自动刷新 profile。版本兼容矩阵：官方声明支持到 dsh 0.1.5-rc.1+（0.1.5-rc.2 实测 OK）。
+- 已验证：一次性 DSH_HOME + 复制真实 profile/凭据，真实会话发消息后 Context tab 图表完整渲染（331 图表元素）；与 11 个内置插件共存无报错。
+
+### 12.7 踩坑清单（接手必看）
+- **PowerShell `Set-Content -Encoding UTF8` 会写 BOM**：`dsh` 后端的 `readProfileManifest` 不认 BOM → 解析崩溃 → 后端连续退出触发恢复助手。改 profile `package.json` 一律用 `[System.IO.File]::WriteAllText(path, json, UTF8Encoding($false))`（无 BOM）。`recovery.js`/`backend.js` 读取已做 BOM 容忍（`\uFEFF` 剥离）。
+- **复制整个 profile 会破坏 `.dsh-module-fallback` 符号链接**：该目录是 dsh 管理的 module proxy（schemastery 等），`Copy-Item` 复制成实体目录后 boot 报 `exists and is not a symlink or dsh-managed module proxy`——删除该目录让 dsh 自愈重建即可。
+- **React 合成事件委托失效定位法**：`getEventListeners` 看根容器只有少数事件、`__reactContainer$<hash>` 相同但 onClick 不触发、手动 `dispatchEvent` 也不触发、原生监听正常 → 结论=合成委托失效，改用原生绑定（勿再深挖原因）。
+- **CDP 输入会卡死**：`Input.dispatchMouseEvent` 在 drag region 或窗口拖拽状态异常后可能整页收不到事件，重启应用进程可恢复（测试时先 kill 旧实例）。
+- dsh-context 需会话有**真实消息**才挂载 Context tab（空会话右侧栏为空，非故障）。
+
+### 12.8 待办/可选
+- 恢复体系**多 profile 版**（Profile 切换 + 启动检查点回滚，官方 `profile-manager.ts`/`profile-checkpoint.ts`）。
+- 设置向导扩展（插件市场/通知/浏览器访问等官方步骤）。
+- 目录选择器补丁（4.4 patch 0002）在升级 dsh-runtime 时仍会被覆盖，需重新应用验证。
+- GitHub 443 不稳定：推送失败重试（本次即首次失败、重试成功）。
