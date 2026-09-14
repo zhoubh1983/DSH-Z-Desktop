@@ -14,8 +14,6 @@ const DEFAULTS = {
   presentationMode: 'compatibility',
   /** 窗口材质：'off' | 'mica'（Windows）| 'transparent'（macOS）。 */
   material: 'off',
-  /** 右侧面板宽度（px）。 */
-  dockWidth: 420,
 }
 
 function settingsFile() {

@@ -84,7 +84,6 @@ const BUILTIN_PLUGINS = [
   'dsh-skill-market',
   'dsh-chrome-control',
   'dsh-conversation-tools',
-  'dsh-browser-control',
   'dsh-desktop-frame',
 ]
 
@@ -272,7 +271,7 @@ function ensureBuiltinSkillsMarket() {
 }
 
 /** 启动 dsh web 后端子进程，返回 { url, port }。 */
-async function startBackend(bridgeUrl = '') {
+async function startBackend() {
   const dshRuntime = resolveDshRuntime()
   const dshBin = resolveDshBin(dshRuntime)
   if (!fs.existsSync(dshBin)) {
@@ -298,8 +297,6 @@ async function startBackend(bridgeUrl = '') {
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
-      // 内嵌浏览器桥端点（主进程 MCP server），供 dsh-browser-control 插件连接。
-      ...(bridgeUrl ? { DSH_BROWSER_BRIDGE_URL: bridgeUrl } : {}),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
@@ -389,11 +386,11 @@ function stopBackend() {
  * 重启后端子进程（操作栏/托盘「重启」用）：停止当前进程、重置重启计数后重新 boot，
  * 返回新的 { url, port }。
  */
-async function restartBackend(bridgeUrl = '') {
+async function restartBackend() {
   stopBackend()
   restartCount = 0
   webUrl = ''
-  return startBackend(bridgeUrl)
+  return startBackend()
 }
 
 module.exports = { startBackend, stopBackend, restartBackend }

@@ -13,11 +13,6 @@ contextBridge.exposeInMainWorld('dshGui', {
     chrome: process.versions.chrome,
   },
   platform: process.platform,
-  // 内嵌浏览器右侧面板（主进程 browser-bridge）：显隐切换 + 三分页标签切换。
-  browser: {
-    toggle: () => ipcRenderer.send('browser:toggle'),
-    showTab: (id) => ipcRenderer.send('browser:showtab', id),
-  },
   // 桌面标题栏（dsh-desktop-frame 插件）：动作执行 + 状态读取。
   desktop: {
     action: (cmd, payload) => ipcRenderer.send('desktop:action', cmd, payload),

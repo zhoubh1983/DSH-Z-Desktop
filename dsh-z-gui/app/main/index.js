@@ -9,8 +9,6 @@ const { startBackend, stopBackend, restartBackend } = require('./backend')
 const { createWindow, focusWindow, getWindow, consumeRecentAbnormal } = require('./window')
 const { resolveDshHome } = require('./paths')
 const { loadSettings, saveSettings } = require('./settings')
-const browser = require('./browser-bridge')
-const chromeBar = require('./chrome-bar')
 const { createTray, destroyTray } = require('./tray')
 const { openTerminal } = require('./terminal')
 
@@ -50,10 +48,10 @@ function requestRelaunchForSettings(patch, description) {
   }).catch(() => {})
 }
 
-/** 桌面动作表（chrome-bar 按钮 / client 标题栏 / IPC 共用分发）。 */
+/** 桌面动作表（页面标题栏经 IPC desktop:action 分发）。 */
 let desktopActions = null
 
-/** 注册桌面动作（chrome-bar 按钮经 bridge /action/desktop、页面标题栏经 IPC desktop:action 分发）。 */
+/** 注册桌面动作（页面标题栏 dsh-desktop-frame client 经 IPC desktop:action 分发）。 */
 function registerDesktopActions() {
   desktopActions = {
     terminal: () => {
@@ -61,16 +59,13 @@ function registerDesktopActions() {
     },
     restart: () => {
       console.log('[dsh-gui] 桌面动作 restart：重启后端…')
-      restartBackend(browser.getBridgeUrl())
+      restartBackend()
         .then(({ url }) => { appUrl = url; if (getWindow()) getWindow().reload() })
         .catch((e) => console.error('[dsh-gui] 重启后端失败:', e))
     },
     devtools: () => {
       const win = getWindow()
       if (win && !win.isDestroyed()) win.webContents.openDevTools({ mode: 'detach' })
-    },
-    panel: () => {
-      browser.toggleVisible()
     },
     mode: (body) => {
       // 支持目标模式参数（{cmd:'mode', mode:'advanced'}）；无参时循环切换（兼容旧按钮）。
@@ -99,16 +94,14 @@ function registerDesktopActions() {
     // 「更多」动作菜单（仿官方 native actions 下拉）。
     'actions-menu': () => {
       const menu = Menu.buildFromTemplate([
-        { label: '重启后端', click: () => { restartBackend(browser.getBridgeUrl()).then(({ url }) => { appUrl = url; if (getWindow()) getWindow().reload() }).catch((e) => console.error('[dsh-gui] 重启后端失败:', e)) } },
+        { label: '重启后端', click: () => { restartBackend().then(({ url }) => { appUrl = url; if (getWindow()) getWindow().reload() }).catch((e) => console.error('[dsh-gui] 重启后端失败:', e)) } },
         { label: '开发者工具', click: () => { const w = getWindow(); if (w && !w.isDestroyed()) w.webContents.openDevTools({ mode: 'detach' }) } },
-        { label: '浏览器面板', click: () => browser.toggleVisible() },
         { type: 'separator' },
         { label: '退出 DSH Desktop', click: () => { quitting = true; app.quit() } },
       ])
       Menu.popup({ window: getWindow() || undefined, callback: () => menu })
     },
   }
-  browser.setDesktopActions(desktopActions)
 
   // 页面标题栏（dsh-desktop-frame client）动作与状态。
   ipcMain.on('desktop:action', (_event, cmd, payload) => {
@@ -155,8 +148,6 @@ if (!app.requestSingleInstanceLock()) {
         {
           label: '视图',
           submenu: [
-            { label: '浏览器面板', accelerator: 'CmdOrCtrl+Shift+B', click: () => browser.toggleVisible() },
-            { type: 'separator' },
             {
               label: '呈现模式',
               submenu: [
@@ -177,38 +168,22 @@ if (!app.requestSingleInstanceLock()) {
         },
       ]))
 
-      // IPC：面板显隐/切标签、呈现模式设置（preload/插件可调用）。
-      ipcMain.on('browser:toggle', () => browser.toggleVisible())
-      ipcMain.on('browser:showtab', (_e, id) => browser.showTab(String(id || 'browser')))
+      // IPC：呈现模式设置（preload/插件可调用）。
       ipcMain.on('mode:set', (_e, m) => { if (m) requestRelaunchForSettings({ presentationMode: String(m) }, '呈现模式') })
 
-      // 启动内嵌浏览器桥（MCP server），再把其端点地址传给 dsh 后端注入 env，
-      // 供 dsh-browser-control 插件用 McpClient(streamable-http) 连接，注册 mcp__browser__*。
-      let bridgeUrl = ''
-      try {
-        bridgeUrl = (await browser.startBrowserBridge()).url
-      } catch (bridgeError) {
-        console.error('[dsh-gui] 启动浏览器桥失败:', bridgeError)
-      }
-      const bridgeBase = bridgeUrl.replace(/\/mcp$/, '')
-      chromeBar.setPanelBaseUrl(bridgeBase)
       registerDesktopActions()
 
-      const { url } = await startBackend(bridgeUrl)
+      const { url } = await startBackend()
       appUrl = url
-      browser.setBackendUrl(url)
 
       const win = createWindow(url, settings)
-      win.on('resize', () => { browser.layoutPanel(); chromeBar.layoutChromeBar() })
-      win.on('closed', () => browser.layoutPanel())
-      win.webContents.on('did-finish-load', () => browser.layoutPanel())
 
       // 托盘驻留：关闭窗口时隐藏到托盘（退出走托盘/菜单显式退出）。
       try {
         createTray({
           onShow: () => { if (win.isMinimized()) win.restore(); win.show(); win.focus() },
           onTerminal: () => { openTerminal() },
-          onRestart: () => { void restartBackend(bridgeUrl).then(({ url: u }) => { appUrl = u; win.reload() }).catch((e) => console.error('[dsh-gui] 托盘重启后端失败:', e)) },
+          onRestart: () => { void restartBackend().then(({ url: u }) => { appUrl = u; win.reload() }).catch((e) => console.error('[dsh-gui] 托盘重启后端失败:', e)) },
           onQuit: () => { quitting = true; app.quit() },
         })
         trayActive = true
@@ -219,10 +194,6 @@ if (!app.requestSingleInstanceLock()) {
         trayActive = false
         console.warn('[dsh-gui] 托盘不可用，关闭窗口将退出:', e)
       }
-
-      // 呈现模式：extended/advanced 由页面内标题栏（dsh-desktop-frame client）渲染，
-      // 不再挂载 WebContentsView 操作栏（完全参考官方 dsh-desktop 的页面内 titlebar）。
-      browser.setDockWidth(settings.dockWidth || browser.DOCK_WIDTH)
     } catch (error) {
       console.error('[dsh-gui] 启动失败:', error)
       dialog.showErrorBox(
@@ -247,8 +218,6 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', () => {
     quitting = true
     stopBackend()
-    browser.disposeBrowserBridge()
-    chromeBar.disposeChromeBar()
     destroyTray()
   })
 
@@ -264,11 +233,7 @@ function reopenWindow() {
     if (getWindow()) return
     console.log('[dsh-gui] 窗口因渲染异常被销毁，自动重建…')
     try {
-      const win = createWindow(appUrl, settings)
-      win.on('resize', () => { browser.layoutPanel(); chromeBar.layoutChromeBar() })
-      win.on('closed', () => browser.layoutPanel())
-      chromeBar.setMode(settings.presentationMode, settings.material)
-      browser.setDockWidth(settings.dockWidth || browser.DOCK_WIDTH)
+      createWindow(appUrl, settings)
     } catch (error) {
       console.error('[dsh-gui] 重建窗口失败:', error)
     }
