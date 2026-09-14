@@ -5,12 +5,40 @@
 
 ---
 
+## 0. 新 AI 会话 5 分钟上手（先读这里）
+
+**这是什么**：DSH Desktop —— Electron 外壳 + dsh web 后端（内置 Node 运行时闭包）+ 10 个内置插件 + 技能市场/记忆库/浏览器控制等。仓库：`zhoubh1983/DSH-Z-Desktop`（私有）。
+
+**当前状态（2026-09-14）**：
+- 活跃分支 **`dev/0.1.0`**（已推送，`main`=0.0.9 正式发行线，勿乱动）。
+- dsh-runtime 闭包 **v0.1.5-rc.2**（`deepseek-harness/` 快照不在 git，新 clone 需先 `node scripts/update-dsh.mjs` 才能构建）。
+- 最新会话工作见 **第 12 节**（呈现模式三栏/React 标题栏/恢复体系/设置向导/dsh-context 内置）。
+
+**快速跑起来（开发模式）**：
+```powershell
+cd dsh-z-gui/app
+node_modules\electron\dist\electron.exe . --remote-debugging-port=9222   # 起 GUI
+# 验证：CDP http://127.0.0.1:9222/json → Runtime.evaluate；或直接看窗口
+```
+- profile 在 `~/.dsh/profiles/web/`，设置 `~/.dsh/gui/settings.json`，日志 `~/.dsh/logs/dsh-gui.log`。
+- 首启无 profile 会弹设置向导（native 窗口）；后端连退 3 次会进恢复助手——都是正常流程。
+
+**必读顺序**：`4.4`（dsh 升级快照+补丁）→ `11.1`（闭包重建全流程）→ `12`（最新会话）→ `7`（插件开发约定）→ `6`（验证方法）。
+
+**四大坑速览**（详见 5.1 / 12.7）：
+1. PowerShell `Set-Content -Encoding UTF8` 写 profile JSON 会带 BOM → dsh 后端解析崩溃。改 profile 一律 `[System.IO.File]::WriteAllText(path, json, UTF8Encoding($false))`。
+2. 插件内 React 合成事件委托失效 → 交互用原生 `addEventListener`（见 12.3）。
+3. `git add` 会静默漏掉 vendored `builtin-plugins/dsh-context/node_modules`（`**/node_modules/` 忽略）→ 必须 `git add -f`。
+4. 目录选择器补丁（patch 0002 `koffi.decode.string16`）官方至今未修，升级 dsh-runtime 必被覆盖，需重新应用。
+
+---
+
 ## 1. 项目是什么
 
 **DSH Desktop**：基于 DeepSeek Harness（dsh）的 Windows 桌面 GUI 应用（Electron 外壳 + dsh web 后端），集成多个自研插件（技能市场、记忆知识库、Webhook 告警、桌面伴侣、浏览器控制）。
 
-- 仓库：https://github.com/zhoubh1983/DSH-Z-Desktop.git（**私有**，main 分支）
-- 交付形态：`dsh-gui-0.1.0-win-x64-setup.exe`（NSIS 安装器，约 348MB）+ `dsh-gui-0.1.0-win-x64-portable.exe`（约 322MB）
+- 仓库：https://github.com/zhoubh1983/DSH-Z-Desktop.git（**私有**，活跃分支 **dev/0.1.0**；main=0.0.9 正式发行线）
+- 交付形态：`dsh-gui-0.1.0-win-x64-setup.exe`（NSIS 安装器）+ `dsh-gui-0.1.0-win-x64-portable.exe`
 - 运行时：Node 24（`.tools/node-v24.20.0-win-x64/node.exe`）；系统 node v22 缺 `createZstdDecompress` 无法启动 dsh web
 
 ---
@@ -47,7 +75,7 @@ dsh-d/                          # 仓库根（git 根）
 - `main/window.js`：窗口创建 + 崩溃自愈（render-process-gone 自动重开；正常关窗即退出）。
 - 开发模式：`resources/icon.png` 作窗口图标；打包后用 exe 自带图标。
 
-### 3.2 内置插件（builtin-plugins/，共 7 个）
+### 3.2 内置插件（builtin-plugins/，共 10 个）
 | 插件 | 作用 | 备注 |
 |---|---|---|
 | `dsh-skill-market` | 技能市场：市场地址/安装/卸载/搜索/分类/排序 UI | API 前缀必须 `/plugins/dsh-skill-market/api`（子路径），不能占根前缀 |
@@ -57,6 +85,9 @@ dsh-d/                          # 仓库根（git 根）
 | `dsh-chrome-control` | 浏览器控制（daemon 架构） | 见 3.4 |
 | `@zebbkira/dsh-skills-mcp-manager` | 技能与 MCP 管理页 | 独立系统，扫描 `~/.dsh/skills` |
 | `dsh-dafeiyu` | 第三方插件 | 独立 upstream 仓库 |
+| `dsh-desktop-frame` | 页面内桌面标题栏（extended/advanced 呈现模式） | React 构建产物，改源码走 `scripts/build-titlebar.mjs`；交互用原生事件（见 12.3） |
+| `dsh-conversation-tools` | 对话区便捷工具（精简历史 /compact、定位工作区） | 纯 JS 零构建 |
+| `dsh-context` | 上下文仪表盘（Context tab，npm dsh-context 0.52.0 内置） | 含嵌套 zod（git 需 `add -f`），升级见 12.6 |
 
 ### 3.3 技能市场（dsh-skill-market）
 - 引擎：`src/market.ts`（MarketEngine：清单解析、安装/覆盖/卸载、来源标记、目录穿越防护）。
@@ -111,7 +142,7 @@ dsh-d/                          # 仓库根（git 根）
 **背景**：`deepseek-harness/` 是官方 dsh 的源码快照，官方升级时需无损同步、并保住本地定制补丁。github git 主站(443)在本环境不稳定，但 codeload/raw 可达，因此采用「**快照 + 补丁批**」方案（**不**用 git submodule）。
 
 > **⚠️ harness 已从 git 跟踪移除（2026-09，提交 e6281e7）**：`.gitignore` 含 `/deepseek-harness/`，仓库不再承载 harness 的 7900 个文件（避免每次升级产生 6000 文件巨 diff）。`deepseek-harness/` 只是磁盘上的本地快照，**不在 git 里**。
-> **当前版本**：`v0.1.2-rc.1`。
+> **当前版本**：`v0.1.5-rc.2`（2026-09 升级，见第 12 节；旧记录 v0.1.2-rc.1 属历史）。
 > **关键影响**：**新 clone 仓库后，必须先本地跑一次 `node scripts/update-dsh.mjs` 拉取快照，才能构建/打包**。升级 harness 同理走该脚本。
 
 **两个脚本**（仓库根 `scripts/`）：
@@ -155,10 +186,10 @@ cd dsh-z-gui/app && npx electron-builder --win --x64
 - 打包偶发 `__uninstaller.exe failed opening file`：清理 release 中间产物重试即可。
 
 ### 5.3 Git 仓库状态
-- 已推送到私有仓库 `zhoubh1983/DSH-Z-Desktop`（main = beb22b9，9663 文件）。
-- 排除项：`node_modules`、`release/`、`.tools/`、`*.zip`、`bak/`、`**/models/**/*.onnx`、三个独立插件目录（dsh-dafeiyu / dsh-skills-mcp-manager / dsh-whale-musume，各有 upstream）。
+- 已推送到私有仓库 `zhoubh1983/DSH-Z-Desktop`（活跃分支 `dev/0.1.0`，2026-09-14 同步至 `988389b`；`main`=0.0.9 正式发行线）。
+- 排除项：`node_modules`（**注意 vendored 插件依赖需 `git add -f`**，见 12.6）、`release/`、`.tools/`、`*.zip`、`bak/`、`**/models/**/*.onnx`、三个独立插件目录（dsh-dafeiyu / dsh-skills-mcp-manager / dsh-whale-musume，各有 upstream）、`deepseek-harness/` 快照。
 - 模型 onnx（90MB+22MB）如需版本化 → Git LFS。
-- GitHub 连接不稳定：推送失败时重试（间歇性 `Connection was reset`）；仓库级已设 `http.postBuffer=500MB`。
+- GitHub 连接不稳定：推送失败时重试（间歇性 `Connection was reset` / `SSL_ERROR_SYSCALL`）；仓库级已设 `http.postBuffer=500MB`。
 
 ---
 
@@ -184,15 +215,17 @@ cd dsh-z-gui/app && npx electron-builder --win --x64
 
 ## 8. 当前状态与建议的下一步
 
-**已完成**：GUI 骨架、7 个内置插件、技能市场完整闭环、Webhook、记忆库、桌面伴侣、浏览器控制 daemon 服务、目录选择器修复、图标更换、Windows 打包、Git 私有仓库交付。
+> 本节约略（历史记录）；**最新状态见第 0 节速览与第 12 节**（2026-09-14：v0.1.5-rc.2 / dev/0.1.0 / 呈现模式 / 恢复体系 / dsh-context）。
 
-**已知待办/可选方向**：
-1. 浏览器控制扩展缺闭环（官方未发布；自研已叫停）——需重新决策。
-2. ONNX 模型是否纳入版本控制（建议 Git LFS）。
-3. 技能市场/记忆插件的更多测试与体验优化。
-4. 跨平台（macOS/Linux）打包验证（config 已有 linux 目标但未验证）。
+**已完成**：GUI 骨架、10 个内置插件、技能市场完整闭环、Webhook、记忆库、桌面伴侣、浏览器控制 daemon 服务、目录选择器修复、图标更换、Windows 打包、三栏呈现模式（compatibility/extended/advanced）、页面内 React 标题栏、恢复体系（恢复助手/安全模式/恢复出厂）、设置向导、自更新流水线、dsh-context 上下文仪表盘。
 
-**最安全的下一步**：在新机器 clone 仓库 → 按第 4 节构建一次 → 用第 6 节方法验证目录选择器与技能市场 → 再进入功能迭代。
+**已知待办/可选方向**（详见 12.8）：
+1. 恢复体系**多 profile 版**（Profile 切换 + 启动检查点回滚）。
+2. 设置向导扩展（插件市场/通知/浏览器访问等官方步骤）。
+3. 浏览器控制扩展缺闭环（官方未发布；自研已叫停）——需重新决策。
+4. 跨平台（macOS/Linux）打包验证（config 已有目标但未验证）。
+
+**最安全的下一步**：在新机器 clone 仓库 → 按第 4 节构建一次（先 `node scripts/update-dsh.mjs` 拉 harness 快照）→ 用第 6 节方法验证目录选择器与技能市场 → 再进入功能迭代。
 
 ---
 
