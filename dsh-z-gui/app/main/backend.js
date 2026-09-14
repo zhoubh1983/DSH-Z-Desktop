@@ -29,6 +29,8 @@ const MAX_RESTARTS = 3
 const READY_TIMEOUT_MS = 60_000
 /** 健康探测间隔（毫秒）。 */
 const READY_POLL_MS = 500
+/** 后端确认死亡（耗尽重启次数）后，探测提前失败的最大等待。 */
+const READY_FAIL_FAST_MS = 2000
 
 let child = null
 let stopping = false
@@ -36,6 +38,8 @@ let restartCount = 0
 let logStream = null
 /** v0.1.2+ dsh web 输出的带 token 完整 URL（`dsh web: http://host:port/?token=...`）。 */
 let webUrl = ''
+/** 后端耗尽重启次数后的失败记录（供恢复体系判断）。 */
+let bootFailure = null
 
 /** 找到本机一个空闲端口（绑定 0 让 OS 分配后释放）。 */
 function findFreePort() {
@@ -50,23 +54,40 @@ function findFreePort() {
   })
 }
 
-/** 轮询探测本地 HTTP 服务是否就绪。 */
+/** 轮询探测本地 HTTP 服务是否就绪。后端确认死亡时提前失败，避免拖满 60s。 */
 function waitForReady(port, timeoutMs = READY_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs
+  const failFastAt = Date.now() + READY_FAIL_FAST_MS
   return new Promise((resolve, reject) => {
     const attempt = () => {
+      if (bootFailure) {
+        reject(bootFailure)
+        return
+      }
       const req = http.get({ host: '127.0.0.1', port, path: '/', timeout: 1000 }, (res) => {
         res.resume()
         resolve()
       })
       req.on('error', () => {
-        if (Date.now() > deadline) reject(new Error('等待 dsh 后端就绪超时'))
-        else setTimeout(attempt, READY_POLL_MS)
+        if (bootFailure && Date.now() > failFastAt) {
+          reject(bootFailure)
+        } else if (Date.now() > deadline) {
+          reject(new Error('等待 dsh 后端就绪超时'))
+        } else {
+          setTimeout(attempt, READY_POLL_MS)
+        }
       })
       req.on('timeout', () => req.destroy())
     }
     attempt()
   })
+}
+
+/** 读取并消费后端启动失败记录（无则返回 null）。 */
+function consumeBootFailure() {
+  const failure = bootFailure
+  bootFailure = null
+  return failure
 }
 
 /**
@@ -85,6 +106,7 @@ const BUILTIN_PLUGINS = [
   'dsh-chrome-control',
   'dsh-conversation-tools',
   'dsh-desktop-frame',
+  'dsh-context',
 ]
 
 /**
@@ -175,7 +197,11 @@ function ensureBuiltinPlugins() {
   const pkgPath = path.join(profileDir, 'package.json')
   let pkg = {}
   try {
-    if (fs.existsSync(pkgPath)) pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+    if (fs.existsSync(pkgPath)) {
+      let raw = fs.readFileSync(pkgPath, 'utf8')
+      if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1) // 容忍 UTF-8 BOM
+      pkg = JSON.parse(raw)
+    }
   } catch { /* 忽略损坏的 manifest */ }
   pkg.dsh ??= {}
   pkg.dsh.profile ??= {}
@@ -349,6 +375,12 @@ const forward = (stream, label) => {
         restartCount += 1
         console.log(`[dsh-gui] 尝试重启后端 (${restartCount}/${MAX_RESTARTS})...`)
         setTimeout(() => void boot(), 1000)
+      } else if (!stopping) {
+        bootFailure = Object.assign(
+          new Error(`dsh 后端连续退出（已尝试 ${MAX_RESTARTS} 次），最近一次 code=${code} signal=${signal}`),
+          { stage: 'host-boot', code, signal },
+        )
+        console.error('[dsh-gui] 后端启动失败：', bootFailure.message)
       }
     })
     child.on('error', (err) => {
@@ -389,8 +421,17 @@ function stopBackend() {
 async function restartBackend() {
   stopBackend()
   restartCount = 0
+  bootFailure = null
   webUrl = ''
   return startBackend()
 }
 
-module.exports = { startBackend, stopBackend, restartBackend }
+module.exports = {
+  startBackend,
+  stopBackend,
+  restartBackend,
+  consumeBootFailure,
+  ensureBuiltinPlugins,
+  BUILTIN_PLUGINS,
+  BASE_BUNDLES,
+}

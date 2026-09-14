@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'" />
+    <title>设置 DSH Desktop</title>
+    <link rel="stylesheet" href="./wizard/style.css" />
+  </head>
+  <body data-step="welcome">
+    <main class="wizard">
+      <div class="wizard-progress" aria-hidden="true">
+        <span data-pt="welcome"></span><span data-pt="mode"></span><span data-pt="material"></span><span data-pt="success"></span>
+      </div>
+
+      <section class="page" data-page="welcome">
+        <h1 data-copy="welcomeTitle"></h1>
+        <p class="sub" data-copy="welcomeBody"></p>
+        <div class="card profile-card">
+          <span class="label" data-copy="profile"></span>
+          <strong class="value">web</strong>
+          <p class="hint" data-copy="firstProfileSetup"></p>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn ghost" id="btn-skip" data-copy="skip"></button>
+          <button type="button" class="btn primary" id="btn-start" data-copy="startSetup"></button>
+        </div>
+      </section>
+
+      <section class="page" data-page="mode" hidden>
+        <h1 data-copy="modeTitle"></h1>
+        <p class="sub" data-copy="modeBody"></p>
+        <div class="options" id="mode-options"></div>
+        <div class="actions">
+          <button type="button" class="btn ghost" id="btn-back-mode" data-copy="back"></button>
+          <button type="button" class="btn primary" id="btn-next-mode" data-copy="next"></button>
+        </div>
+      </section>
+
+      <section class="page" data-page="material" hidden>
+        <h1 data-copy="materialTitle"></h1>
+        <p class="sub" data-copy="materialBody"></p>
+        <div class="options" id="material-options"></div>
+        <div class="actions">
+          <button type="button" class="btn ghost" id="btn-back-material" data-copy="back"></button>
+          <button type="button" class="btn primary" id="btn-next-material" data-copy="next"></button>
+        </div>
+      </section>
+
+      <section class="page" data-page="success" hidden>
+        <div class="success-mark">✓</div>
+        <h1 data-copy="successTitle"></h1>
+        <p class="sub" data-copy="successBody"></p>
+        <div class="actions center">
+          <button type="button" class="btn primary" id="btn-finish" data-copy="startUsing"></button>
+        </div>
+      </section>
+    </main>
+    <script src="./wizard/app.js"></script>
+  </body>
+</html>

@@ -5,12 +5,15 @@
 
 const path = require('node:path')
 const { app, dialog, Menu, ipcMain } = require('electron')
-const { startBackend, stopBackend, restartBackend } = require('./backend')
+const { startBackend, stopBackend, restartBackend, consumeBootFailure } = require('./backend')
 const { createWindow, focusWindow, getWindow, consumeRecentAbnormal } = require('./window')
 const { resolveDshHome } = require('./paths')
 const { loadSettings, saveSettings } = require('./settings')
 const { createTray, destroyTray } = require('./tray')
 const { openTerminal } = require('./terminal')
+const { exportDiagnostics } = require('./diagnostics')
+const { needsSetup, openWizardWindow, registerWizardIpc } = require('./wizard')
+const { openRecoveryWindow, registerRecoveryIpc } = require('./recovery')
 
 // 应用数据（缓存/日志等）统一放到 $DSH_HOME/gui，与 dsh 用户数据集中管理。
 app.setPath('userData', path.join(resolveDshHome(), 'gui'))
@@ -97,9 +100,17 @@ function registerDesktopActions() {
         { label: '重启后端', click: () => { restartBackend().then(({ url }) => { appUrl = url; if (getWindow()) getWindow().reload() }).catch((e) => console.error('[dsh-gui] 重启后端失败:', e)) } },
         { label: '开发者工具', click: () => { const w = getWindow(); if (w && !w.isDestroyed()) w.webContents.openDevTools({ mode: 'detach' }) } },
         { type: 'separator' },
+        { label: '进入恢复模式', click: () => openRecoveryWindow({ requested: true }) },
+        { type: 'separator' },
+        { label: '导出诊断信息', click: () => { void exportDiagnostics(getWindow()).then((p) => { if (p) console.log('[dsh-gui] 诊断包已导出:', p) }).catch((e) => console.error('[dsh-gui] 导出诊断失败:', e)) } },
+        { type: 'separator' },
         { label: '退出 DSH Desktop', click: () => { quitting = true; app.quit() } },
       ])
       Menu.popup({ window: getWindow() || undefined, callback: () => menu })
+    },
+    // 恢复模式（引导页插件加载失败时注入的按钮 / 标题栏动作）。
+    'recovery-open': () => {
+      openRecoveryWindow({ requested: false, stage: 'boot-failure', detail: '引导页报告部分插件加载失败。' })
     },
   }
 
@@ -172,8 +183,39 @@ if (!app.requestSingleInstanceLock()) {
       ipcMain.on('mode:set', (_e, m) => { if (m) requestRelaunchForSettings({ presentationMode: String(m) }, '呈现模式') })
 
       registerDesktopActions()
+      // 原生窗口（设置向导/恢复助手）IPC。
+      registerWizardIpc({ onRelaunch: () => { app.relaunch(); app.exit(0) } })
+      registerRecoveryIpc()
 
-      const { url } = await startBackend()
+      // 首次运行（web profile 未初始化）→ 设置向导，不启动后端。
+      if (needsSetup()) {
+        console.log('[dsh-gui] 首次运行：打开设置向导')
+        openWizardWindow()
+        return
+      }
+
+      let url
+      try {
+        const result = await startBackend()
+        url = result.url
+      } catch (error) {
+        // 后端连续退出 → 进入恢复模式；其它基础设施错误保持原错误弹窗。
+        const failure = consumeBootFailure()
+        if (failure) {
+          openRecoveryWindow({
+            requested: false,
+            stage: failure.stage || 'host-boot',
+            detail: failure.message,
+          })
+        } else {
+          console.error('[dsh-gui] 启动失败:', error)
+          dialog.showErrorBox(
+            'DSH Desktop 启动失败',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        return
+      }
       appUrl = url
 
       const win = createWindow(url, settings)
@@ -183,6 +225,8 @@ if (!app.requestSingleInstanceLock()) {
         createTray({
           onShow: () => { if (win.isMinimized()) win.restore(); win.show(); win.focus() },
           onTerminal: () => { openTerminal() },
+          onRecovery: () => { openRecoveryWindow({ requested: true }) },
+          onDiagnostics: () => { void exportDiagnostics(win).then((p) => { if (p) console.log('[dsh-gui] 诊断包已导出:', p) }).catch((e) => console.error('[dsh-gui] 导出诊断失败:', e)) },
           onRestart: () => { void restartBackend().then(({ url: u }) => { appUrl = u; win.reload() }).catch((e) => console.error('[dsh-gui] 托盘重启后端失败:', e)) },
           onQuit: () => { quitting = true; app.quit() },
         })

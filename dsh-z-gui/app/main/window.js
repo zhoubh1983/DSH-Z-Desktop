@@ -75,6 +75,11 @@ function createWindow(url, settings = {}) {
 
   win.loadURL(url)
 
+  // 引导页插件加载失败（Failed to load plugins）时注入「打开恢复模式」按钮。
+  win.webContents.on('did-finish-load', () => {
+    injectBootRecoveryButton(win)
+  })
+
   // 渲染进程异常（GPU/内存/崩溃）时：标记异常并自动重载；
   // 若窗口因此被销毁，由 index 侧 window-all-closed 判定为异常场景并重建。
   win.webContents.on('render-process-gone', (_event, details) => {
@@ -122,6 +127,47 @@ function getWindow() {
 /** 当前标题栏高度（px，compat/Linux=0；供页面 paddingTop 与操作栏布局）。 */
 function getChromeHeight() {
   return chromeHeight(currentMode, process.platform)
+}
+
+/**
+ * 引导页插件失败注入：dsh web 引导页出现 "Failed to load plugins" 报告时，
+ * 追加「打开恢复模式」按钮（点击经 preload 的 dshGui.desktop.action 送达主进程）。
+ * 与官方 desktop-boot-recovery 同思路；使用 MutationObserver 等待失败报告渲染。
+ */
+function injectBootRecoveryButton(win) {
+  const script = `(() => {
+    const endpointLabel = '打开恢复模式';
+    const style = document.createElement('style');
+    style.textContent = '[data-dsh-desktop-recovery]{margin-top:12px;display:flex;flex-direction:column;gap:10px;align-items:flex-start;max-width:480px;color:#cfd3d6;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif}[data-dsh-desktop-recovery] p{margin:0;font-size:12px;line-height:18px}[data-dsh-desktop-recovery] button{min-height:38px;padding:0 18px;border:0;border-radius:20px;background:#f9fafb;color:#151517;cursor:pointer;font:600 14px/22px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}';
+    document.head.appendChild(style);
+    const attach = () => {
+      const root = document.querySelector('[data-dsh-boot]');
+      if (!root || root.querySelector('[data-dsh-desktop-recovery]')) return;
+      const title = Array.from(root.querySelectorAll('div')).find((node) => node.childElementCount === 0 && node.textContent && node.textContent.trim() === 'Failed to load plugins');
+      const report = title && title.parentElement;
+      if (!report) return;
+      const panel = document.createElement('section');
+      panel.setAttribute('data-dsh-desktop-recovery', '');
+      const p = document.createElement('p');
+      p.textContent = '部分插件加载失败，可能与当前 DSH 版本不兼容。你可以进入恢复模式卸载有问题的插件，或恢复出厂设置后重新启动。';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = endpointLabel;
+      btn.addEventListener('click', () => {
+        btn.disabled = true;
+        if (window.dshGui && window.dshGui.desktop && window.dshGui.desktop.action) {
+          window.dshGui.desktop.action('recovery-open', { reason: 'boot-failure' });
+        } else {
+          btn.disabled = false;
+        }
+      });
+      panel.append(p, btn);
+      report.append(panel);
+    };
+    attach();
+    new MutationObserver(attach).observe(document.documentElement, { childList: true, subtree: true });
+  })();`
+  win.webContents.executeJavaScript(script).catch(() => { /* 非引导页/SPA 正常加载时静默 */ })
 }
 
 module.exports = { createWindow, focusWindow, getWindow, consumeRecentAbnormal, getChromeHeight }

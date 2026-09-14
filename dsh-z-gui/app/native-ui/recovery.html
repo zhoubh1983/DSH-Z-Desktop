@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'" />
+    <title>DSH Desktop 恢复助手</title>
+    <link rel="stylesheet" href="./wizard/style.css" />
+  </head>
+  <body>
+    <main class="recovery">
+      <header>
+        <div class="title-row">
+          <h1 data-copy="title"></h1>
+          <span class="badge" data-copy="version"></span>
+        </div>
+        <p class="sub" data-copy="subtitle"></p>
+        <div class="card reason-card" id="reason-card">
+          <span class="label" data-copy="reason"></span>
+          <div class="stage" id="reason-stage"></div>
+          <pre id="reason-detail" hidden></pre>
+        </div>
+      </header>
+
+      <nav class="tabs" id="tabs" role="tablist"></nav>
+
+      <section class="tab-content" id="tab-quick" data-tab="quick">
+        <div class="quick-grid">
+          <div class="card" data-go="plugins"><h3 data-copy="pluginGuideTitle"></h3><p class="desc" data-copy="pluginGuideBody"></p></div>
+          <div class="card" data-go="safe"><h3 data-copy="safeModeTitle"></h3><p class="desc" data-copy="safeModeBody"></p><span class="badge-safe" id="quick-safe-badge" hidden></span></div>
+          <div class="card" data-go="data"><h3 data-copy="dataGuideTitle"></h3><p class="desc" data-copy="dataGuideBody"></p></div>
+          <div class="card" data-go="diagnostics"><h3 data-copy="diagnosticsGuideTitle"></h3><p class="desc" data-copy="diagnosticsGuideBody"></p></div>
+        </div>
+      </section>
+
+      <section class="tab-content" id="tab-plugins" data-tab="plugins" hidden>
+        <div class="card">
+          <h3 data-copy="pluginsTitle"></h3>
+          <p class="desc" data-copy="pluginsBody"></p>
+          <div id="plugin-list"></div>
+          <p class="status-line" id="plugin-status"></p>
+        </div>
+      </section>
+
+      <section class="tab-content" id="tab-safe" data-tab="safe" hidden>
+        <div class="card">
+          <h3 data-copy="safeModeTitle"></h3>
+          <p class="desc" data-copy="safeModeDetail"></p>
+          <span class="badge-safe" id="safe-badge" hidden></span>
+          <div class="actions">
+            <button type="button" class="btn primary" id="btn-safe-mode"></button>
+          </div>
+          <p class="status-line" id="safe-status"></p>
+        </div>
+      </section>
+
+      <section class="tab-content" id="tab-data" data-tab="data" hidden>
+        <div class="card">
+          <h3 data-copy="dataTitle"></h3>
+          <p class="desc" data-copy="dataBody"></p>
+          <span class="label" data-copy="dataDirLabel"></span>
+          <code class="code-path" id="data-dir-path"></code>
+          <span class="label" data-copy="profileDirLabel"></span>
+          <code class="code-path" id="profile-dir-path"></code>
+          <div class="actions">
+            <button type="button" class="btn ghost" id="btn-open-data-dir"></button>
+            <button type="button" class="btn danger" id="btn-factory-reset"></button>
+          </div>
+          <p class="status-line" id="data-status"></p>
+        </div>
+      </section>
+
+      <section class="tab-content" id="tab-diagnostics" data-tab="diagnostics" hidden>
+        <div class="card">
+          <h3 data-copy="diagnosticsTitle"></h3>
+          <p class="desc" data-copy="diagnosticsBody"></p>
+          <div class="actions">
+            <button type="button" class="btn primary" id="btn-export-diag"></button>
+            <button type="button" class="btn ghost" id="btn-open-profile-dir"></button>
+          </div>
+          <p class="status-line" id="diag-status"></p>
+        </div>
+      </section>
+
+      <footer class="foot">
+        <button type="button" class="btn ghost" id="btn-quit"></button>
+        <button type="button" class="btn primary" id="btn-restart"></button>
+      </footer>
+    </main>
+
+    <div class="modal-backdrop" id="modal-backdrop" hidden>
+      <div class="modal card">
+        <h3 id="modal-title"></h3>
+        <p class="desc" id="modal-body"></p>
+        <div class="actions">
+          <button type="button" class="btn ghost" id="modal-cancel"></button>
+          <button type="button" class="btn danger" id="modal-confirm"></button>
+        </div>
+      </div>
+    </div>
+
+    <script src="./recovery/app.js"></script>
+  </body>
+</html>

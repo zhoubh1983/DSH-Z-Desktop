@@ -14,6 +14,8 @@ const DEFAULTS = {
   presentationMode: 'compatibility',
   /** 窗口材质：'off' | 'mica'（Windows）| 'transparent'（macOS）。 */
   material: 'off',
+  /** 安全模式：仅加载内置 bundle（恢复体系用）。 */
+  safeMode: false,
 }
 
 function settingsFile() {

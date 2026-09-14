@@ -1,16 +1,31 @@
 /**
- * 系统托盘：显示/隐藏窗口、重启后端、退出。
+ * 系统托盘：显示/隐藏窗口、打开终端、导出诊断、重启后端、退出。
+ * 菜单文案按系统 locale 中/英切换（参考官方 tray-locale）。
  * @module dsh-gui/main/tray
  */
 
 const path = require('node:path')
 const fs = require('node:fs')
-const { Tray, Menu, nativeImage } = require('electron')
+const { app, Tray, Menu, nativeImage } = require('electron')
 
 let tray = null
 
+/** 按系统 locale 解析菜单文案。 */
+function labels() {
+  const zh = app.getLocale().toLowerCase().startsWith('zh')
+  return {
+    show: zh ? '显示 DSH Desktop' : 'Show DSH Desktop',
+    terminal: zh ? '打开 DSH 终端' : 'Open DSH Terminal',
+    recovery: zh ? '进入恢复模式' : 'Open Recovery Mode',
+    diagnostics: zh ? '导出诊断信息' : 'Export Diagnostics',
+    restart: zh ? '重启后端' : 'Restart Backend',
+    quit: zh ? '退出' : 'Quit',
+    tooltip: 'DSH Desktop',
+  }
+}
+
 /** 创建托盘（应用启动时）。 */
-function createTray({ onShow, onTerminal, onRestart, onQuit }) {
+function createTray({ onShow, onTerminal, onRecovery, onDiagnostics, onRestart, onQuit }) {
   const iconPath = path.join(__dirname, '..', 'resources', 'icon.png')
   let icon
   try {
@@ -25,15 +40,18 @@ function createTray({ onShow, onTerminal, onRestart, onQuit }) {
   } catch {
     icon = nativeImage.createEmpty()
   }
+  const t = labels()
   tray = new Tray(icon.resize({ width: 16, height: 16 }))
-  tray.setToolTip('DSH Desktop')
+  tray.setToolTip(t.tooltip)
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '显示 DSH Desktop', click: () => onShow() },
-    { label: '打开 DSH 终端', click: () => onTerminal && onTerminal() },
+    { label: t.show, click: () => onShow() },
+    { label: t.terminal, click: () => onTerminal && onTerminal() },
+    { label: t.recovery, click: () => onRecovery && onRecovery() },
+    { label: t.diagnostics, click: () => onDiagnostics && onDiagnostics() },
     { type: 'separator' },
-    { label: '重启后端', click: () => onRestart() },
+    { label: t.restart, click: () => onRestart() },
     { type: 'separator' },
-    { label: '退出', click: () => onQuit() },
+    { label: t.quit, click: () => onQuit() },
   ]))
   tray.on('click', () => onShow())
   return tray

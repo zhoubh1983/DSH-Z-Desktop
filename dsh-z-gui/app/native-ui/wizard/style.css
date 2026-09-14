@@ -1,0 +1,180 @@
+/* 设置向导 / 恢复助手 共享原生 UI 风格（零构建，纯 CSS）。 */
+:root {
+  --bg: #0f1117;
+  --bg-2: #161a23;
+  --bg-3: #1b1f27;
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --fg: #e5e7eb;
+  --fg-2: #9ca3af;
+  --fg-3: #6b7280;
+  --brand: #6366f1;
+  --brand-hover: #4f46e5;
+  --danger: #ef4444;
+  --ok: #22c55e;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  user-select: none;
+}
+
+.wizard, .recovery {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- 通用控件 ---- */
+h1 { margin: 0 0 6px; font-size: 22px; font-weight: 650; letter-spacing: -0.2px; }
+.sub { margin: 0 0 22px; color: var(--fg-2); font-size: 13px; line-height: 1.7; }
+.label { display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-3); }
+.value { display: block; margin-top: 4px; font-size: 16px; font-weight: 600; word-break: break-all; }
+.hint { margin: 10px 0 0; color: var(--fg-2); font-size: 12px; line-height: 1.7; }
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  padding: 18px 20px;
+}
+
+.options { display: grid; gap: 10px; }
+.option {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  transition: border-color 0.12s, background 0.12s;
+}
+.option:hover { background: rgba(255, 255, 255, 0.04); }
+.option[data-selected="true"] { border-color: var(--brand); background: rgba(99, 102, 241, 0.12); }
+.option .dot {
+  flex: none;
+  width: 16px; height: 16px;
+  margin-top: 2px;
+  border: 1.5px solid var(--fg-3);
+  border-radius: 50%;
+  display: grid; place-items: center;
+}
+.option[data-selected="true"] .dot { border-color: var(--brand); }
+.option[data-selected="true"] .dot::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--brand); }
+.option .body strong { display: block; font-size: 14px; font-weight: 600; }
+.option .body small { display: block; margin-top: 2px; color: var(--fg-2); font-size: 12px; }
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+.actions.center { justify-content: center; }
+
+.btn {
+  min-height: 38px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font: 600 14px/38px ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  transition: background 0.12s, opacity 0.12s;
+}
+.btn.primary { background: var(--brand); color: #fff; }
+.btn.primary:hover { background: var(--brand-hover); }
+.btn.ghost { background: transparent; color: var(--fg-2); border: 1px solid var(--border-strong); }
+.btn.ghost:hover { color: var(--fg); background: rgba(255, 255, 255, 0.06); }
+.btn.danger { background: rgba(239, 68, 68, 0.12); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.35); }
+.btn.danger:hover { background: rgba(239, 68, 68, 0.22); }
+.btn:disabled { opacity: 0.5; cursor: progress; }
+.btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+.success-mark {
+  width: 64px; height: 64px;
+  margin: 12px auto 18px;
+  border-radius: 50%;
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--ok);
+  font-size: 30px;
+  display: grid; place-items: center;
+}
+
+/* ---- 向导 ---- */
+.wizard { padding: 32px 40px; max-width: 640px; margin: 0 auto; width: 100%; }
+.wizard-progress { display: flex; gap: 8px; margin-bottom: 28px; }
+.wizard-progress span { flex: 1; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.1); }
+.wizard-progress span[data-done="true"] { background: var(--brand); }
+.profile-card { margin-bottom: 4px; }
+
+/* ---- 恢复助手 ---- */
+.recovery { padding: 22px 28px 28px; }
+.recovery header .title-row { display: flex; align-items: center; gap: 10px; }
+.recovery header .badge {
+  padding: 2px 10px; border: 1px solid var(--border-strong); border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05); color: var(--fg-2); font-size: 11px;
+}
+.recovery .reason-card { margin: 16px 0; }
+.recovery .reason-card .stage { color: var(--danger); font-weight: 600; }
+.recovery .reason-card pre {
+  margin: 10px 0 0; padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.35); border-radius: 8px;
+  font: 11px/1.6 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  white-space: pre-wrap; word-break: break-all;
+  color: var(--fg-2); user-select: text; max-height: 120px; overflow: auto;
+}
+.recovery .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.recovery .tabs button {
+  padding: 8px 14px; border: 0; background: transparent; color: var(--fg-2);
+  cursor: pointer; font: 600 13px/1 ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.recovery .tabs button[data-active="true"] { color: var(--fg); border-bottom-color: var(--brand); }
+.recovery .tab-content { flex: 1; min-height: 0; overflow-y: auto; }
+.recovery .tab-content .card + .card { margin-top: 12px; }
+.recovery .card h3 { margin: 0 0 6px; font-size: 14px; font-weight: 650; }
+.recovery .card .desc { margin: 0 0 12px; color: var(--fg-2); font-size: 12px; line-height: 1.7; }
+.recovery .card .row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 0; border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.recovery .card .row .name { font-weight: 600; font-size: 13px; word-break: break-all; }
+.recovery .card .row .meta { color: var(--fg-3); font-size: 11px; margin-top: 2px; }
+.recovery .foot {
+  display: flex; justify-content: flex-end; gap: 10px;
+  border-top: 1px solid var(--border); padding-top: 16px; margin-top: 16px;
+}
+.recovery .status-line { color: var(--fg-2); font-size: 12px; min-height: 18px; margin-top: 8px; }
+.recovery .status-line[data-error="true"] { color: var(--danger); }
+.recovery .code-path {
+  display: block; padding: 8px 10px; margin: 6px 0 10px;
+  background: rgba(0, 0, 0, 0.3); border-radius: 8px;
+  font: 11px/1.6 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color: var(--fg-2); word-break: break-all; user-select: text;
+}
+.recovery .quick-grid { display: grid; gap: 10px; }
+.recovery .quick-grid .card { cursor: pointer; }
+.recovery .quick-grid .card:hover { border-color: var(--brand); }
+.recovery .badge-safe { display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 999px; background: rgba(99, 102, 241, 0.15); color: #a5b4fc; font-size: 11px; }
+
+/* ---- 确认弹窗 ---- */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 100;
+  display: grid; place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+.modal { width: min(440px, calc(100vw - 48px)); }
+.modal .desc { margin-bottom: 4px; white-space: pre-wrap; }
+.modal .actions { margin-top: 18px; }
