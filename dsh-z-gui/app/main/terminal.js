@@ -9,7 +9,7 @@
  * @module dsh-gui/main/terminal
  */
 
-const { spawn } = require('node:child_process')
+const { spawn, spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
 const { resolveDshHome, resolveDshRuntime, resolveDshBin } = require('./paths')
@@ -102,7 +102,27 @@ function prepareFiles() {
   ].join('\r\n')
   replaceFile(welcomePath, welcome)
 
-  return { shimDir, welcomePath, profileDir, dshHome, productVersion }
+  // pwsh 欢迎脚本（DSH_TERMINAL=pwsh / wt 时使用）。
+  const welcomePsPath = path.join(stateDir, 'welcome.ps1')
+  const welcomePs = [
+    '# DSH Desktop terminal',
+    `$env:DSH_HOME = '${escapePsPath(dshHome)}'`,
+    `Set-Location -LiteralPath '${escapePsPath(profileDir)}'`,
+    `Write-Host ('DSH Desktop {0} terminal' -f '${escapePsPath(productVersion)}')`,
+    'Write-Host ("DSH_HOME: {0}" -f $env:DSH_HOME)',
+    'Write-Host "Profile: web"',
+    'Write-Host "Commands: dsh --dump-config / dsh web --port 8899 --no-open"',
+    'Write-Host "Restart DSH Desktop after plugin changes."',
+    '',
+  ].join('\r\n')
+  replaceFile(welcomePsPath, welcomePs)
+
+  return { shimDir, welcomePath, welcomePsPath, profileDir, dshHome, productVersion }
+}
+
+/** 转义写入 PowerShell 脚本的单引号字符串（路径含反引号/单引号时）。 */
+function escapePsPath(value) {
+  return String(value).replaceAll("'", "''").replaceAll('`', '``').replaceAll('$', '`$')
 }
 
 /** Windows 回退 shell：cmd.exe（解析 ComSpec，几乎必然存在）。 */
@@ -110,9 +130,31 @@ function resolveCmd() {
   return process.env.ComSpec || path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe')
 }
 
-/** 拉起系统终端（win32 普通控制台；darwin 用 Terminal.app；linux 不支持）。 */
+/** 用 where.exe 解析可执行文件路径（不存在返回 null）。 */
+function whichExecutable(name) {
+  try {
+    const r = spawnSync('where.exe', [name], { stdio: 'pipe', windowsHide: true, timeout: 5000 })
+    if (r.status === 0) {
+      const first = r.stdout.toString().split(/\r?\n/).map((s) => s.trim()).find(Boolean)
+      if (first && fs.existsSync(first)) return first
+    }
+  } catch { /* 探测失败视为不存在 */ }
+  return null
+}
+
+/** 解析 PowerShell（pwsh 优先，回退 powershell）。 */
+function resolvePwsh() {
+  return whichExecutable('pwsh.exe') || whichExecutable('powershell.exe')
+}
+
+/** 解析 Windows Terminal。 */
+function resolveWt() {
+  return whichExecutable('wt.exe')
+}
+
+/** 拉起系统终端（win32：cmd 默认稳定 / wt·pwsh 可选；darwin 用 Terminal.app；linux 不支持）。 */
 function openTerminal() {
-  const { shimDir, welcomePath, profileDir, dshHome, productVersion } = prepareFiles()
+  const { shimDir, welcomePath, welcomePsPath, profileDir, dshHome, productVersion } = prepareFiles()
 
   const env = {
     ...process.env,
@@ -123,12 +165,38 @@ function openTerminal() {
 
   if (process.platform === 'win32') {
     const cmd = resolveCmd()
-    // 直接拉起普通控制台窗口（cmd /K 欢迎脚本）。wt.exe 在远程控制/虚拟显示
-    // 环境下 ConPTY 创建可能失败（0xD0000008），故不再优先尝试 Windows Terminal。
-    spawn(cmd, ['/K', welcomePath], { env, cwd: profileDir, windowsHide: false, detached: false })
-      .on('error', (error) => {
-        console.error('[dsh-gui] 终端启动失败:', error.message)
-      })
+    const cmdLaunch = () => {
+      // 默认普通控制台（cmd /K 欢迎脚本）：远程控制/虚拟显示环境下
+      // wt 的 ConPTY 创建可能失败（0xD0000008），故默认不启用 wt。
+      spawn(cmd, ['/K', welcomePath], { env, cwd: profileDir, windowsHide: false, detached: false })
+        .on('error', (error) => { console.error('[dsh-gui] 终端启动失败:', error.message) })
+    }
+    const override = (process.env.DSH_TERMINAL || '').toLowerCase()
+    if (override === 'wt') {
+      const wt = resolveWt()
+      if (wt) {
+        spawn(wt, ['new-tab', '--title', 'DSH Desktop', '-d', profileDir, cmd, '/K', welcomePath],
+          { env, cwd: profileDir, windowsHide: false, detached: false })
+          .on('error', (error) => { console.warn('[dsh-gui] wt 启动失败，降级 cmd:', error.message); cmdLaunch() })
+        return
+      }
+      console.warn('[dsh-gui] wt.exe 不可用，降级 cmd')
+      cmdLaunch()
+      return
+    }
+    if (override === 'pwsh') {
+      const pwsh = resolvePwsh()
+      if (pwsh) {
+        spawn(pwsh, ['-NoExit', '-ExecutionPolicy', 'Bypass', '-File', welcomePsPath],
+          { env, cwd: profileDir, windowsHide: false, detached: false })
+          .on('error', (error) => { console.warn('[dsh-gui] pwsh 启动失败，降级 cmd:', error.message); cmdLaunch() })
+        return
+      }
+      console.warn('[dsh-gui] pwsh 不可用，降级 cmd')
+      cmdLaunch()
+      return
+    }
+    cmdLaunch()
     return
   }
   if (process.platform === 'darwin') {
