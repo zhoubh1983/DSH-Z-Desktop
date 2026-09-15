@@ -220,6 +220,26 @@ function ensureBuiltinPlugins() {
     console.log('[dsh-gui] 已更新 profile bundle 列表:', bundles.join(', '))
   }
 
+  // 2.5) 清理已从 BUILTIN_PLUGINS 移除的旧内置插件残留（有 .dsh-builtin-fingerprint 标记，
+  //      但不在当前 base/builtin 列表 → 上次同步后插件被废弃）。防止悬浮面板等旧 UI 残留。
+  const currentBuiltins = [...BASE_BUNDLES, ...BUILTIN_PLUGINS]
+  const staleBuiltins = bundles.filter((name) => {
+    if (currentBuiltins.includes(name)) return false
+    const base = name.startsWith('@') ? path.join(profileNm, ...name.split('/')) : path.join(profileNm, name)
+    return fs.existsSync(path.join(base, '.dsh-builtin-fingerprint'))
+  })
+  if (staleBuiltins.length > 0) {
+    pkg.dsh.profile.bundles = bundles.filter((name) => !staleBuiltins.includes(name))
+    for (const name of staleBuiltins) {
+      const base = name.startsWith('@') ? path.join(profileNm, ...name.split('/')) : path.join(profileNm, name)
+      fs.rmSync(base, { recursive: true, force: true })
+      if (pkg.dependencies && pkg.dependencies[name]) delete pkg.dependencies[name]
+      if (pkg.devDependencies && pkg.devDependencies[name]) delete pkg.devDependencies[name]
+      console.log(`[dsh-gui] 清理已废弃的内置插件残留: ${name}`)
+    }
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
+  }
+
   // 3) dsh-memory embedding 模型自举：随包模型 → $DSH_HOME/dsh-memory/models（缺失时）
   const modelSrc = path.join(src, 'dsh-memory-plugin', 'models')
   const modelDestRoot = path.join(resolveDshHome(), 'dsh-memory', 'models')
