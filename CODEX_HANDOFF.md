@@ -9,10 +9,11 @@
 
 **这是什么**：DSH Desktop —— Electron 外壳 + dsh web 后端（内置 Node 运行时闭包）+ 10 个内置插件 + 技能市场/记忆库/浏览器控制等。仓库：`zhoubh1983/DSH-Z-Desktop`（私有）。
 
-**当前状态（2026-09-14）**：
+**当前状态（2026-09-15）**：
 - 活跃分支 **`dev/0.1.0`**（已推送，`main`=0.0.9 正式发行线，勿乱动）。
 - dsh-runtime 闭包 **v0.1.5-rc.2**（`deepseek-harness/` 快照不在 git，新 clone 需先 `node scripts/update-dsh.mjs` 才能构建）。
-- 最新会话工作见 **第 12 节**（呈现模式三栏/React 标题栏/恢复体系/设置向导/dsh-context 内置）。
+- 最新会话工作见 **第 12 节**（呈现模式三栏/React 标题栏/恢复体系/设置向导/dsh-context 内置）；悬浮面板清理与重打包见 **12.9**。
+- 打包产物（2026-09-15）：`release/dsh-gui-0.1.0-win-x64-setup.exe`（327.9MB）+ `portable.exe`（303.4MB）。
 
 **快速跑起来（开发模式）**：
 ```powershell
@@ -25,11 +26,12 @@ node_modules\electron\dist\electron.exe . --remote-debugging-port=9222   # 起 G
 
 **必读顺序**：`4.4`（dsh 升级快照+补丁）→ `11.1`（闭包重建全流程）→ `12`（最新会话）→ `7`（插件开发约定）→ `6`（验证方法）。
 
-**四大坑速览**（详见 5.1 / 12.7）：
+**四大坑速览**（详见 5.1 / 12.7 / 12.9）：
 1. PowerShell `Set-Content -Encoding UTF8` 写 profile JSON 会带 BOM → dsh 后端解析崩溃。改 profile 一律 `[System.IO.File]::WriteAllText(path, json, UTF8Encoding($false))`。
 2. 插件内 React 合成事件委托失效 → 交互用原生 `addEventListener`（见 12.3）。
 3. `git add` 会静默漏掉 vendored `builtin-plugins/dsh-context/node_modules`（`**/node_modules/` 忽略）→ 必须 `git add -f`。
 4. 目录选择器补丁（patch 0002 `koffi.decode.string16`）官方至今未修，升级 dsh-runtime 必被覆盖，需重新应用。
+5. **从内置列表移除插件后，旧 profile 副本不会自动消失**（会继续注入旧 UI，如 `🧭 面板` 悬浮按钮）。`ensureBuiltinPlugins` 已内置残留清理（按 `.dsh-builtin-fingerprint` 标记），但改 `BUILTIN_PLUGINS` 时记得同步清本机 profile 或重启应用触发。
 
 ---
 
@@ -186,7 +188,7 @@ cd dsh-z-gui/app && npx electron-builder --win --x64
 - 打包偶发 `__uninstaller.exe failed opening file`：清理 release 中间产物重试即可。
 
 ### 5.3 Git 仓库状态
-- 已推送到私有仓库 `zhoubh1983/DSH-Z-Desktop`（活跃分支 `dev/0.1.0`，2026-09-14 同步至 `988389b`；`main`=0.0.9 正式发行线）。
+- 已推送到私有仓库 `zhoubh1983/DSH-Z-Desktop`（活跃分支 `dev/0.1.0`，2026-09-15 同步至 `77e54af`；`main`=0.0.9 正式发行线）。
 - 排除项：`node_modules`（**注意 vendored 插件依赖需 `git add -f`**，见 12.6）、`release/`、`.tools/`、`*.zip`、`bak/`、`**/models/**/*.onnx`、三个独立插件目录（dsh-dafeiyu / dsh-skills-mcp-manager / dsh-whale-musume，各有 upstream）、`deepseek-harness/` 快照。
 - 模型 onnx（90MB+22MB）如需版本化 → Git LFS。
 - GitHub 连接不稳定：推送失败时重试（间歇性 `Connection was reset` / `SSL_ERROR_SYSCALL`）；仓库级已设 `http.postBuffer=500MB`。
@@ -408,3 +410,10 @@ python dsh-z-gui/scripts/ensure-portable-closure.py .
 - 设置向导扩展（插件市场/通知/浏览器访问等官方步骤）。
 - 目录选择器补丁（4.4 patch 0002）在升级 dsh-runtime 时仍会被覆盖，需重新应用验证。
 - GitHub 443 不稳定：推送失败重试（本次即首次失败、重试成功）。
+
+### 12.9 悬浮面板清理与重打包（2026-09-15）
+- **现象**：打包版页面右上出现 `🧭 面板` 悬浮按钮（`id="dbc-toggle-bar"`，z-index 999999）。
+- **根因**：`dsh-browser-control` 插件曾在 `BUILTIN_PLUGINS`（旧版同步过 profile），bf4de87 从源码/列表移除后，**profile 的 node_modules 副本与 bundle 项未清**，其 client.js 仍注入悬浮按钮。
+- **修复**（提交 `77e54af`）：`ensureBuiltinPlugins` 新增第 2.5 步——扫描 profile bundles，凡带 `.dsh-builtin-fingerprint` 标记但不在当前 `BASE_BUNDLES+BUILTIN_PLUGINS` 的旧插件，自动从 bundle 列表/依赖/node_modules 移除（覆盖未来升级场景）。本机 profile 重启即清。
+- **保留**：鲸鱼娘看板娘（dsh-whale-musume，桌面伴侣）是有意保留的悬浮 overlay，勿误删。
+- **重打包**：`release/` 2026-09-15 重新生成（setup 327.9MB / portable 303.4MB），验证 `dbc-toggle-bar` 消失、标题栏/看板娘/dsh-context 正常。
