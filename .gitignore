@@ -48,3 +48,6 @@ Thumbs.db
 /.trae/
 
 # 临时调试 / 未确认资产，勿入库.tmp-cdp/dsh-z-gui/images/
+# 临时调试 / 未确认资产，勿入库
+.tmp-cdp/
+dsh-z-gui/images/
