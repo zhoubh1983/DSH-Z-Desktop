@@ -1,9 +1,9 @@
 /**
  * dsh-conversation-tools 客户端：在 dsh web 对话界面输入区上方（conversation.composer.dock）
  * 注入一条便捷工具行：
- *   - 「精简历史」：通过会话通道 send('/compact') 触发 dsh 内置的历史压缩；
- *   - 「定位工作区文件夹」：拉取 /api/workspaces 列出全部工作区，点击调用 /api/open
- *     在本地资源管理器定位/打开对应目录。
+ *   - 「精简历史」：通过会话通道 send('/compact') 触发 dsh 内置的历史压缩。
+ * 另在左侧「工作区分组头行」注册右键菜单（在资源管理器中打开 / 复制路径），
+ * 走 Host 侧 /api/workspaces 与 /api/open。
  * 零构建（与 dsh-skill-market / dsh-memory-plugin 一致的 ModuleLoader + slots 注入模式）。
  */
 window.__ModuleLoader__.load({ id: 'dsh-conversation-tools', factory: (require) => {
@@ -180,7 +180,6 @@ window.__ModuleLoader__.load({ id: 'dsh-conversation-tools', factory: (require) 
   function Icon({ name, size = 13 }) {
     const paths = {
       compress: '<path d="m16 3 4 4-4 4"/><path d="M20 7H9"/><path d="m8 13-4 4 4 4"/><path d="M4 17h11"/>',
-      folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
     }
     return el('svg', {
       width: size, height: size, viewBox: '0 0 24 24', fill: 'none',
@@ -190,11 +189,8 @@ window.__ModuleLoader__.load({ id: 'dsh-conversation-tools', factory: (require) 
   }
 
   function ConversationToolsBar(_props) {
-    const [listing, setListing] = useState(false)
-    const [workspaces, setWorkspaces] = useState(null) // null=未拉取 / array=已拉取
     const [busy, setBusy] = useState(false)
     const [msg, setMsg] = useState(null) // { text, err }
-    const [loading, setLoading] = useState(false)
 
     const notify = (text, err) => setMsg({ text, err: !!err })
 
@@ -203,9 +199,15 @@ window.__ModuleLoader__.load({ id: 'dsh-conversation-tools', factory: (require) 
       setBusy(true)
       setMsg(null)
       try {
-        const convo = actx && (actx.conversation || actx.get?.('conversation'))
+        // conversation.send 需要会话作用域：取当前激活会话的 scope 再 send。
+        // 直接用 actx.conversation 会抛 "requires a session scope"（根 ctx 无会话标签）。
+        const sessions = actx && (actx.get?.('sessions') || actx.sessions)
+        const scopedCtx = sessions && sessions.list && sessions.scope
+          ? sessions.scope(sessions.list.getSnapshot().current)
+          : null
+        const convo = scopedCtx && (scopedCtx.conversation || scopedCtx.get?.('conversation'))
         if (!convo || typeof convo.send !== 'function') {
-          notify('会话通道不可用，可直接输入 /compact', true)
+          notify('当前会话不可用，可直接输入 /compact', true)
           return
         }
         await convo.send('/compact')
@@ -217,49 +219,9 @@ window.__ModuleLoader__.load({ id: 'dsh-conversation-tools', factory: (require) 
       }
     }
 
-    const toggleList = async () => {
-      if (listing && workspaces) { setListing(false); return }
-      setListing(true)
-      setMsg(null)
-      if (workspaces === null) {
-        setLoading(true)
-        try {
-          const data = await fetchJson(`${API}/workspaces`)
-          setWorkspaces(data && data.ok ? data.workspaces : [])
-        } catch (error) {
-          notify(error instanceof Error ? error.message : String(error), true)
-          setWorkspaces([])
-        } finally {
-          setLoading(false)
-        }
-      }
-    }
-
-    const openPath = async (p) => {
-      setMsg(null)
-      try {
-        await fetchJson(`${API}/open`, { method: 'POST', body: JSON.stringify({ path: p }) })
-        notify('已在资源管理器中打开')
-      } catch (error) {
-        notify(error instanceof Error ? error.message : String(error), true)
-      }
-    }
-
     return el('div', { className: 'dctg-wrap' },
       el('button', { type: 'button', className: 'dctg-btn', disabled: busy, title: '触发 /compact，把较早的历史对话压缩成摘要', onClick: compactHistory },
         el(Icon, { name: 'compress' }), '精简历史'),
-      el('button', { type: 'button', className: 'dctg-btn', title: '列出工作区并在文件资源管理器中定位', onClick: toggleList },
-        el(Icon, { name: 'folder' }), '定位工作区文件夹'),
-      listing && el('div', { className: 'dctg-pop' },
-        loading
-          ? el('span', null, '加载中…')
-          : workspaces.length === 0
-            ? el('span', null, '暂无工作区')
-            : workspaces.map((w) => el('span', { key: w.id, className: 'dctg-row' },
-                el('span', { className: 'dctg-path', title: w.path }, w.path),
-                el('button', { type: 'button', className: 'dctg-open', onClick: () => openPath(w.path) }, '打开'),
-              )),
-      ),
       msg ? el('span', { className: msg.err ? 'dctg-msg err' : 'dctg-msg' }, msg.text) : null,
     )
   }

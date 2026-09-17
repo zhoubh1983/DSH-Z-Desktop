@@ -76,7 +76,17 @@ function registerWizardIpc({ onRelaunch }) {
   })
 
   ipcMain.handle('wizard:cancel', () => {
-    app.quit()
+    // 「跳过设置」：用平台默认配置初始化 profile 并重启进入应用（而非直接退出）。
+    // 与 wizard:complete 相同流程，仅使用默认选择。
+    const defaults = {
+      presentationMode: 'compatibility',
+      material: process.platform === 'win32' ? 'mica' : 'off',
+    }
+    const normalized = normalizeSelection(defaults)
+    saveSettings(normalized)
+    ensureBuiltinPlugins()
+    console.log('[dsh-gui] 设置向导跳过：使用默认配置', JSON.stringify(normalized))
+    if (typeof onRelaunch === 'function') onRelaunch()
     return { ok: true }
   })
 }

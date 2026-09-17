@@ -1,7 +1,7 @@
 {
-  "name": "dsh-conversation-tools",
+  "name": "dsh-embedded-browser",
   "version": "0.1.0",
-  "description": "DSH Desktop 内置插件：对话区便捷工具——「精简历史」一键触发 /compact 压缩历史对话；左侧工作区分组行右键菜单支持在资源管理器中打开/复制路径。纯 JS 零构建。",
+  "description": "DSH 右侧内嵌浏览器面板：基于 <webview> 渲染网页，Agent 通过 webview_* 工具（经主进程浏览器桥）驱动导航、截图。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -21,21 +21,20 @@
     "client": {
       "platform": "web",
       "inject": [
-        "@deepseek-ai/dsh-client-ui-conversation"
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
       ]
     }
-  },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.0-rc.7"
   },
   "keywords": [
     "dsh",
     "deepseek-harness",
     "cordis",
     "plugin",
-    "conversation",
-    "compact",
-    "workspace"
+    "browser",
+    "webview"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.0-rc.7"
+  }
 }

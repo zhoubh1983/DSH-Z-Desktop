@@ -109,7 +109,10 @@ function runPlugin(profile, args) {
 	const result = spawnSync("pnpm", args.map((argument) => anchorPathSpec(argument, process.cwd())), {
 		cwd: dir,
 		stdio: "inherit",
-		shell: process.platform === "win32"
+		shell: process.platform === "win32",
+		// 父进程（dsh web）无控制台，shell:true 在 Windows 上经 cmd.exe /c 执行；
+		// 不隐藏会为每个 pnpm 调用弹出一个一闪而过的 cmd 窗口。
+		windowsHide: true
 	});
 	if (result.error !== void 0) {
 		if (result.error.code === "ENOENT") {

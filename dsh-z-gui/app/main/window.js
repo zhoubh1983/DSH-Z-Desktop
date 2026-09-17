@@ -8,10 +8,49 @@ const fs = require('node:fs')
 const { BrowserWindow } = require('electron')
 const { buildWindowOptions, chromeHeight } = require('./window-chrome')
 
+/**
+ * 关窗/退出阶段 stdout 管道可能已被父进程关闭，console.* 直接抛 EPIPE 未捕获异常
+ * （实测关窗触发 "Uncaught Exception: EPIPE: broken pipe"）。统一兜底，静默忽略。
+ */
+function safeLog(fn, ...args) {
+  try {
+    fn(...args)
+  } catch {
+    /* 进程退出期管道断裂属预期，忽略 */
+  }
+}
+
 let win = null
 // 当前呈现模式/材质（createWindow 时记录，供 getChromeHeight 与页面 inset 使用）。
 let currentMode = 'compatibility'
 let currentMaterial = 'off'
+
+/** 主界面目标地址（后端就绪前为空；渲染异常重载/窗口重建时作为导航目标）。 */
+let targetUrl = ''
+
+/**
+ * 启动 loading 页（data URL 内联，零构建）。
+ * 后端初始化（复制插件/模型 + 插件树加载）可能耗时 20~30 秒，窗口先行加载本页，
+ * 避免这段时间无窗口/白屏；后端就绪后由主进程导航到真实界面。
+ */
+const LOADING_URL = 'data:text/html;charset=utf-8,' + encodeURIComponent(`<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body{margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0f1117;color:#9aa1ad;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;gap:14px}
+  .spinner{width:34px;height:34px;border:3px solid #262b36;border-top-color:#4b7bec;border-radius:50%;animation:spin .9s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .title{color:#e6e8eb;font-size:15px;font-weight:600}
+  .hint{font-size:12px;color:#6b7280}
+</style>
+</head>
+<body>
+  <div class="spinner"></div>
+  <div class="title">正在启动 DSH Desktop…</div>
+  <div class="hint">正在初始化内置插件与本地模型，请稍候</div>
+</body>
+</html>`)
 
 // 渲染进程最近一次异常（崩溃/卡死）的时间戳，用于区分「异常关闭→重建窗口」
 // 与「用户正常关闭窗口→退出应用」：异常后短时间内窗口被销毁视为异常场景。
@@ -44,8 +83,9 @@ function windowsBuildNumber() {
   }
 }
 
-/** 创建并加载 dsh Web 界面的主窗口。 */
+/** 创建并加载 dsh Web 界面的主窗口。url 为空时先加载启动 loading 页（后端就绪后导航）。 */
 function createWindow(url, settings = {}) {
+  targetUrl = url || ''
   currentMode = settings.presentationMode === 'advanced'
     ? 'advanced'
     : settings.presentationMode === 'extended'
@@ -69,11 +109,13 @@ function createWindow(url, settings = {}) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // 允许 <webview> 标签：右侧内嵌浏览器面板（dsh-embedded-browser）依赖它。
+      webviewTag: true,
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
     },
   })
 
-  win.loadURL(url)
+  win.loadURL(targetUrl || LOADING_URL)
 
   // 引导页插件加载失败（Failed to load plugins）时注入「打开恢复模式」按钮。
   win.webContents.on('did-finish-load', () => {
@@ -83,26 +125,26 @@ function createWindow(url, settings = {}) {
   // 渲染进程异常（GPU/内存/崩溃）时：标记异常并自动重载；
   // 若窗口因此被销毁，由 index 侧 window-all-closed 判定为异常场景并重建。
   win.webContents.on('render-process-gone', (_event, details) => {
-    console.error(`[dsh-gui] 渲染进程异常退出 (${details.reason})，自动恢复中…`)
+    safeLog(console.error, `[dsh-gui] 渲染进程异常退出 (${details.reason})，自动恢复中…`)
     if (details.reason !== 'clean-exit') {
       markAbnormal()
       setTimeout(() => {
         if (!win || win.isDestroyed()) return
-        win.loadURL(url)
+        win.loadURL(targetUrl || LOADING_URL)
       }, 500)
     }
   })
 
   // 页面长时间无响应时强制恢复渲染进程（触发 render-process-gone 走上面的恢复）。
   win.webContents.on('unresponsive', () => {
-    console.warn('[dsh-gui] 页面无响应，强制恢复渲染进程…')
+    safeLog(console.warn, '[dsh-gui] 页面无响应，强制恢复渲染进程…')
     markAbnormal()
     win.webContents.forcefullyCrashRenderer()
   })
 
   // 记录窗口关闭事件，便于排查偶发退出（配合 dsh-gui.log）。
   win.on('close', () => {
-    console.log('[dsh-gui] 主窗口关闭')
+    safeLog(console.log, '[dsh-gui] 主窗口关闭')
   })
 
   win.on('closed', () => {
@@ -127,6 +169,11 @@ function getWindow() {
 /** 当前标题栏高度（px，compat/Linux=0；供页面 paddingTop 与操作栏布局）。 */
 function getChromeHeight() {
   return chromeHeight(currentMode, process.platform)
+}
+
+/** 设置主界面目标地址（后端就绪后由 index 调用，供渲染异常重载导航到真实界面）。 */
+function setTargetUrl(url) {
+  targetUrl = url
 }
 
 /**
@@ -170,4 +217,4 @@ function injectBootRecoveryButton(win) {
   win.webContents.executeJavaScript(script).catch(() => { /* 非引导页/SPA 正常加载时静默 */ })
 }
 
-module.exports = { createWindow, focusWindow, getWindow, consumeRecentAbnormal, getChromeHeight }
+module.exports = { createWindow, focusWindow, getWindow, consumeRecentAbnormal, getChromeHeight, setTargetUrl }

@@ -31,4 +31,14 @@ exports.default = async function afterPack(context) {
         ? '(' + fs.readdirSync(path.join(nm, '@deepseek-ai')).length + ' @deepseek-ai)'
         : '')
   }
+
+  // 清理 electronDist 自带残留的 debug.log：该文件是本地 electron dist 在开发
+  // 调试时写入的旧日志（含误导性的 crashpad "not connected" 记录），会被
+  // electron-builder 原样复制进产物；安装后用户查看安装目录时容易误以为
+  // 应用崩溃。删除后应用正常运行不会再生成（crashpad 上报失败属无害噪音）。
+  const staleDebugLog = path.join(appOutDir, 'debug.log')
+  if (fs.existsSync(staleDebugLog)) {
+    fs.rmSync(staleDebugLog, { force: true })
+    console.log('[afterPack] 已移除残留的 debug.log:', staleDebugLog)
+  }
 }

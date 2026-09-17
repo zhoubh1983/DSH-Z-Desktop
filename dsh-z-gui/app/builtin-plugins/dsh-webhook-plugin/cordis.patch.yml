@@ -2,6 +2,11 @@
 # `dsh plugin add` 会把整个插件装进 profile 后自动应用本补丁（无需手动改 profile 的 cordis.patch.yml）。
 # 本补丁只插入自己的插件行；具体配置（端口、路径、skills 等）可在这里直接写，
 # 也可留在 profile 层 cordis.patch.yml 里按 id 覆盖。
+#
+# 注意：不要把预设技能写进这里的 config.skills——dsh 设置服务对
+# base 层与用户层做递归合并（replace 也合并），base 里的技能键会
+# 永远存在、无法删除/无法改名（改名会变成“旧名+新名并存”）。
+# 预设技能请交给用户从「Webhook 告警」设置页自行增删。
 - insert:
     - id: dsh-webhook
       name: dsh-webhook-plugin
@@ -12,7 +17,4 @@
         sessionId: 'webhook'
         defaultSkill: 'HandleAlert'
         autoCreate: false
-        skills:
-          HandleAlert:
-            prompt: '收到来自系统 {system} 的告警（推送时间 {time}）。{message} 请按运维预案分析根因并给出处置建议。'
         maxBodyBytes: 1048576

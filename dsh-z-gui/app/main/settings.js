@@ -16,6 +16,8 @@ const DEFAULTS = {
   material: 'off',
   /** 安全模式：仅加载内置 bundle（恢复体系用）。 */
   safeMode: false,
+  /** dsh web 固定端口：null=未持久化（首次用默认 3080），被占自动切换并固定。 */
+  dshPort: null,
 }
 
 function settingsFile() {

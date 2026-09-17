@@ -14,6 +14,9 @@ window.__ModuleLoader__.load({
 
     const BASE = "/api/dsh-whale-musume/assets?f=";
     const BOOT_FLAG = "__dshWhaleMusumeBooted";
+    /* 表现层改动后加版本尾巴绕过浏览器缓存（服务端会剥掉 ?v= 再取文件） */
+    const SHELL_VERSION = "v=20260916-2";
+    const URL_ = (f) => BASE + f + "?" + SHELL_VERSION;
 
     function injectStyle(text) {
       const el = document.createElement("style");
@@ -33,11 +36,18 @@ window.__ModuleLoader__.load({
       if (window[BOOT_FLAG]) return;
       window[BOOT_FLAG] = true;
       try {
-        const css = await (await fetch(BASE + "dsh-whale-moe.css")).text();
+        // 幂等防护：同一页面即使被注入两次（升级迁移/插件重复加载），
+        // 也只保留最新一份样式/脚本/根节点，避免出现两只鲸鱼娘。
+        for (const el of document.querySelectorAll(
+          'script[data-dsh-whale-musume], style[data-dsh-whale-musume], [data-dsh-whale-root]'
+        )) {
+          el.remove()
+        }
+        const css = await (await fetch(URL_("dsh-whale-moe.css"))).text();
         injectStyle(css);
-        const core = await (await fetch(BASE + "whale-moe-core.js")).text();
+        const core = await (await fetch(URL_("whale-moe-core.js"))).text();
         injectScript(core);
-        const raw = await (await fetch(BASE + "dsh-whale-moe.js")).text();
+        const raw = await (await fetch(URL_("dsh-whale-moe.js"))).text();
         const presenter = raw
           .replace('var ASSET_ROOT = "/assets/generated/";', 'var ASSET_ROOT = "' + BASE + 'generated/";')
           .replace('fetch("/assets/peek-calibration.json")', 'fetch("' + BASE + 'peek-calibration.json")');

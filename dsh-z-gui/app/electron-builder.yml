@@ -13,6 +13,9 @@ directories:
 files:
   - main/**/*
   - preload/**/*
+  - native-ui/**/*
+  - resources/icon.png
+  - resources/app-icon.png
   - package.json
 extraResources:
   - from: dsh-runtime

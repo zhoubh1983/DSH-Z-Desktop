@@ -22,6 +22,21 @@ const {
   resolveBuiltinSkillsMarketDir,
   resolveLogFile,
 } = require('./paths')
+const { loadSettings, saveSettings } = require('./settings')
+const { startBrowserBridge } = require('./browser-bridge')
+
+/**
+ * 关窗/退出阶段 stdout 管道可能已被父进程关闭，console.* 抛 EPIPE 未捕获异常。
+ * 本地兜底：与全局兜底不同，catch 住后**不中断当前回调**（uncaughtException
+ * 处理器会丢弃抛出点之后的逻辑，如后端退出后的自动重启）。
+ */
+function safeLog(fn, ...args) {
+  try {
+    fn(...args)
+  } catch {
+    /* 进程退出期管道断裂属预期，忽略 */
+  }
+}
 
 /** 后端进程崩溃后的自动重启次数上限。 */
 const MAX_RESTARTS = 3
@@ -52,6 +67,42 @@ function findFreePort() {
       server.close(() => resolve(port))
     })
   })
+}
+
+/** dsh web 固定端口（默认 3080，与 chrome-control 扩展默认地址一致）。 */
+const DEFAULT_DSH_PORT = 3080
+
+/** 判断指定端口在 127.0.0.1 上是否空闲（可绑定）。 */
+function isPortFree(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer()
+    server.unref()
+    server.once('error', () => resolve(false))
+    server.listen(port, '127.0.0.1', () => {
+      server.close(() => resolve(true))
+    })
+  })
+}
+
+/**
+ * 解析 dsh web 固定端口：
+ * - 优先使用已持久化的 dshPort（~/.dsh/gui/settings.json）；
+ * - 首次启动默认 3080；若被占用则自动切换到空闲端口，并持久化为新的固定端口；
+ * - 之后每次启动都绑定该固定端口（除非再次被占用才再切换）。
+ * 目的：chrome-control 扩展 / 外部书签的地址只需配置一次，长期稳定。
+ */
+async function resolveDshPort() {
+  const { dshPort } = loadSettings()
+  const stored = Number.isInteger(dshPort) && dshPort > 0 ? dshPort : null
+  const preferred = stored ?? DEFAULT_DSH_PORT
+  if (await isPortFree(preferred)) {
+    if (stored === null) saveSettings({ dshPort: preferred })
+    return preferred
+  }
+  const fallback = await findFreePort()
+  saveSettings({ dshPort: fallback })
+  console.log(`[dsh-gui] dsh 端口 ${preferred} 被占用，已切换到空闲端口 ${fallback} 并固定`)
+  return fallback
 }
 
 /** 轮询探测本地 HTTP 服务是否就绪。后端确认死亡时提前失败，避免拖满 60s。 */
@@ -98,7 +149,6 @@ function consumeBootFailure() {
  */
 const BUILTIN_PLUGINS = [
   'dsh-webhook-plugin',
-  'dsh-dafeiyu',
   'dsh-whale-musume',
   '@zebbkira/dsh-skills-mcp-manager',
   'dsh-memory-plugin',
@@ -107,6 +157,7 @@ const BUILTIN_PLUGINS = [
   'dsh-conversation-tools',
   'dsh-desktop-frame',
   'dsh-context',
+  'dsh-embedded-browser',
 ]
 
 /**
@@ -151,11 +202,31 @@ function hashPluginCode(dir) {
   return hash.digest('hex')
 }
 
-/** 覆盖式同步一个内置插件包到 profile，并写入代码指纹标记。 */
-function syncPluginDir(from, to) {
+/** 复制到 profile 时按插件排除的冗余资源。 */
+const SYNC_EXCLUDES = {
+  'dsh-memory-plugin': ['models'],
+}
+
+/**
+ * 覆盖式同步一个内置插件包到 profile，并写入代码指纹标记。
+ * 排除项（SYNC_EXCLUDES）里的资源目录不会复制进 profile 副本。
+ */
+function syncPluginDir(from, to, name = '') {
   fs.rmSync(to, { recursive: true, force: true })
   fs.mkdirSync(path.dirname(to), { recursive: true })
-  fs.cpSync(from, to, { recursive: true })
+  const excludes = SYNC_EXCLUDES[name] || []
+  if (excludes.length === 0) {
+    fs.cpSync(from, to, { recursive: true })
+  } else {
+    fs.mkdirSync(to, { recursive: true })
+    for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+      if (excludes.includes(entry.name)) {
+        console.log(`[dsh-gui] 跳过冗余资源 ${name}/${entry.name}（运行时从 $DSH_HOME 读取）`)
+        continue
+      }
+      fs.cpSync(path.join(from, entry.name), path.join(to, entry.name), { recursive: true })
+    }
+  }
   fs.writeFileSync(path.join(to, '.dsh-builtin-fingerprint'), hashPluginCode(from), 'utf8')
   console.log(`[dsh-gui] 已同步内置插件 -> ${to}`)
 }
@@ -180,7 +251,7 @@ function ensureBuiltinPlugins() {
     const to = path.join(profileNm, name)
     if (!fs.existsSync(from)) continue
     if (!fs.existsSync(to)) {
-      syncPluginDir(from, to)
+      syncPluginDir(from, to, name)
       continue
     }
     const fingerprint = hashPluginCode(from)
@@ -189,7 +260,7 @@ function ensureBuiltinPlugins() {
       stored = fs.readFileSync(path.join(to, '.dsh-builtin-fingerprint'), 'utf8').trim()
     } catch { /* 旧副本无指纹标记，视为需要刷新 */ }
     if (stored !== fingerprint) {
-      syncPluginDir(from, to)
+      syncPluginDir(from, to, name)
     }
   }
 
@@ -327,7 +398,9 @@ async function startBackend() {
   ensureBuiltinPlugins()
   ensureBuiltinSkillsMarket()
 
-  const port = await findFreePort()
+  const port = await resolveDshPort()
+  // 浏览器桥（dsh-embedded-browser 的 Agent 工具经它驱动右侧 <webview>）。
+  const bridgeUrl = await startBrowserBridge()
   logStream = fs.createWriteStream(resolveLogFile(), { flags: 'a' })
 
   // dsh 的 Cordis 加载器/HMR 需要访问 Node 内部模块（--expose-internals）
@@ -343,13 +416,21 @@ async function startBackend() {
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
+      DSH_BROWSER_BRIDGE_URL: bridgeUrl,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
 
-  /** 等待 forward 捕获到 `dsh web:` 输出的带 token URL（HTTP 就绪可能早于该行输出到达，故竞态保护）。 */
-function waitForWebUrl(timeoutMs = 5000) {
+  /**
+   * 等待 forward 捕获到 `dsh web:` 输出的带 token URL。
+   * 注意：HTTP 端口监听（waitForReady 的 GET / 探测）可能远早于 `dsh web:` 行输出——
+   * 全新机器首启需复制内置插件/加载插件树，该行可能 5~30 秒后才到达。若在此超时，
+   * 会回退裸地址 `http://127.0.0.1:port`，而 v0.1.2+ 的 dsh web 默认 token 认证，
+   * 裸地址返回 401 → 窗口加载失败，前端永远停留在「等待 dsh 启动」的 boot 界面。
+   * 故超时与后端就绪超时（READY_TIMEOUT_MS）对齐，给慢启动留足时间。
+   */
+  function waitForWebUrl(timeoutMs = READY_TIMEOUT_MS) {
   return new Promise((resolve) => {
     const deadline = Date.now() + timeoutMs
     const check = () => {
@@ -371,7 +452,7 @@ const forward = (stream, label) => {
     for (const raw of lines) {
       const text = raw.trimEnd()
       const line = `[${label}] ${text}`
-      console.log(line)
+      safeLog(console.log, line)
       if (logStream) logStream.write(line + '\n')
       // v0.1.2+ 的 dsh web 默认带 token 认证（`dsh web: http://host:port/?token=...`）。
       // 窗口必须加载带 token 的完整 URL，否则 401 黑屏。
@@ -388,33 +469,33 @@ const forward = (stream, label) => {
     forward(child.stderr, 'dsh:err')
 
     child.on('exit', (code, signal) => {
-      console.log(`[dsh-gui] dsh 后端退出 code=${code} signal=${signal}`)
+      safeLog(console.log, `[dsh-gui] dsh 后端退出 code=${code} signal=${signal}`)
       if (logStream) logStream.write(`[dsh-gui] dsh 后端退出 code=${code} signal=${signal}\n`)
       child = null
       if (!stopping && restartCount < MAX_RESTARTS) {
         restartCount += 1
-        console.log(`[dsh-gui] 尝试重启后端 (${restartCount}/${MAX_RESTARTS})...`)
+        safeLog(console.log, `[dsh-gui] 尝试重启后端 (${restartCount}/${MAX_RESTARTS})...`)
         setTimeout(() => void boot(), 1000)
       } else if (!stopping) {
         bootFailure = Object.assign(
           new Error(`dsh 后端连续退出（已尝试 ${MAX_RESTARTS} 次），最近一次 code=${code} signal=${signal}`),
           { stage: 'host-boot', code, signal },
         )
-        console.error('[dsh-gui] 后端启动失败：', bootFailure.message)
+        safeLog(console.error, '[dsh-gui] 后端启动失败：', bootFailure.message)
       }
     })
     child.on('error', (err) => {
-      console.error('[dsh-gui] 后端进程错误:', err)
+      safeLog(console.error, '[dsh-gui] 后端进程错误:', err)
     })
 
     await waitForReady(port)
   }
 
   await boot()
-  // HTTP 就绪探测可能早于 `dsh web:` 输出到达（500ms 轮询 vs 输出缓冲），
-  // 再等待捕获带 token 的完整 URL；超时（后端无 token 输出）则回退裸地址。
-  const url = (await waitForWebUrl()) || `http://127.0.0.1:${port}`
-  return { url, port }
+    // HTTP 就绪探测可能早于 `dsh web:` 输出到达（500ms 轮询 vs 输出缓冲），
+    // 再等待捕获带 token 的完整 URL；超时（后端无 token 输出）则回退裸地址。
+    const url = (await waitForWebUrl()) || `http://127.0.0.1:${port}`
+    return { url, port }
 }
 
 /** 停止后端子进程（幂等）。 */

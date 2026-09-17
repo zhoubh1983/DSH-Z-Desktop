@@ -26,7 +26,9 @@ function labels() {
 
 /** 创建托盘（应用启动时）。 */
 function createTray({ onShow, onTerminal, onRecovery, onDiagnostics, onRestart, onQuit }) {
-  const iconPath = path.join(__dirname, '..', 'resources', 'icon.png')
+  // 与应用图标（icon.ico 的源素材 app-icon.png）保持同一图源，避免托盘与
+  // 任务栏/桌面图标因裁切不同而显得不一致。
+  const iconPath = path.join(__dirname, '..', 'resources', 'app-icon.png')
   let icon
   try {
     icon = fs.existsSync(iconPath)

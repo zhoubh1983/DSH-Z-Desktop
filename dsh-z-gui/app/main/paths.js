@@ -35,7 +35,7 @@ function resolveWebhookPluginDir(dshRuntime) {
   return path.join(dshRuntime, 'webhook-plugin')
 }
 
-/** 内置插件目录（webhook / dafeiyu / whale-musume / skills-mcp-manager / skill-market）。 */
+/** 内置插件目录（webhook / whale-musume / skills-mcp-manager / skill-market）。 */
 function resolveBuiltinPluginsDir() {
   if (process.env.DSH_BUILTIN_PLUGINS_DIR) return process.env.DSH_BUILTIN_PLUGINS_DIR
   if (app.isPackaged) return path.join(process.resourcesPath, 'builtin-plugins')

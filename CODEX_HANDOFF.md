@@ -99,11 +99,12 @@ dsh-d/                          # 仓库根（git 根）
 - 重新采集内置市场：`dsh-z-gui/scripts/collect-skills-market.mjs`（源 codeload.github.com tarball；github.com git 不可达、ghproxy 不可达、gitclone 可达）。
 
 ### 3.4 浏览器控制（dsh-chrome-control，重点交接项）
-- 当前内置 **0.3.2 = daemon 架构**：`lib/server.js` spawn Rust `chrome-daemon`（`binaries/<platform-arch>/`），固定端口 **37086**，路由 `/chrome/mcp`、`/chrome/ws`（扩展 WebSocket）、`/chrome/status`、`/chrome/shutdown`。
-- 协议：扩展连 `ws://127.0.0.1:37086/chrome/ws`（Origin 必须 `chrome-extension://`）；帧：`hello/pong/tool_result`（客户端），`ping/hello_ack/tool_call`（服务端）；共 27 个工具（navigate/snapshot/click/fill/…/get_text），契约在 daemon 源码 `tools_catalog.rs`。
-- **扩展现状**：官方未发布配套扩展；Chrome 商店的 "DeepSeek Harness for Chrome" 是侧边栏 GUI 扩展，**协议不匹配**。官方仓库 `dshapp/dsh-chrome-control` 无扩展源码。
-- **决策记录**：曾评估"内置自研扩展 + 引导安装"，**已被用户叫停**，未写任何代码。接手者如需浏览器控制闭环，可重新评估（自研 MV3 扩展 / 等官方 / 引导占位）——**不要假设扩展已存在**。
-- `/chrome/status` 返回 503 `{"running":false,"extension_connected":false}` = 扩展未连接，正常。
+- 当前内置 **v0.4.0 = 无 daemon 架构**：不再 spawn Rust `chrome-daemon`（旧 0.3.2 daemon 及端口 37086 已废弃）。路由直接挂在 dsh web 的 `webServer` 上：`/chrome/mcp`（MCP Streamable HTTP）、`/chrome/ws`（扩展 WebSocket）、`/chrome/status`（liveness）。
+- 闭环依赖 **内置 MV3 扩展**（`builtin-plugins/dsh-chrome-control/extension/`，`manifest_version:3`，service worker 连 `ws://<server>/chrome/ws`）——**扩展必须由用户手动加载**（chrome://extensions → 开发者模式 → 加载已解压的扩展程序 → 选该 `extension/` 目录；popup 里设 DSH server 地址 = 当前 dsh web 地址，并打开 "Allow agent control" 总闸）。未加载扩展时 `/chrome/status` 返回 503、所有 `mcp__chrome__*` 工具报 "No Chrome extension is attached"——**正常现象，非故障**。
+- **使用前提（接手者按序核对，四条缺一不可）**：① 用户**自己打开 Chrome 并保持运行**（agent/脚本 spawn 的 Chrome 会被 Windows Job 对象回收杀掉，正确姿势是"用户开着 Chrome + 扩展已连接"）；② **手动加载扩展**——chrome-control **不会自动给浏览器装扩展**：Chrome 对"加载未打包扩展"没有任何静默安装 API，只能由浏览器所有者本人在 chrome://extensions 里操作，装完是持久生效的；③ 扩展 popup 设 DSH server 地址 = dsh web 地址（默认 `http://127.0.0.1:3080`，因 dsh web 端口已固定，**配一次即可**）；④ popup 打开 "Allow agent control" 总闸。四条就绪后 `/chrome/status` 返回 `extensionConnected:true`，工具才可用。
+- dsh web 端口**已固定**（2026-09-15 实现）：默认绑定 **3080**（与扩展默认地址一致）；首次发现被占用时自动切换到空闲端口，并持久化到 `~/.dsh/gui/settings.json` 的 `dshPort`，之后每次启动都绑定该固定端口（再次被占才再切换）。扩展 server 地址配一次即可，无需每次启动改。
+- 协议/工具集：扩展经 CDP 驱动用户真实 Chrome（登录态/标签/Cookie 全在），25 个工具（navigate/snapshot/click/fill/…/get_text）；Agent 用 shell 命令拉起 Chrome 会被子进程回收（Windows Job 内含）杀进程，**正确用法是用户自己开着 Chrome + 扩展已连接**。
+- 与 harness 内置 `browser_*` 工具（独立 WebKit 面板、无登录态）区分；skill `chrome` 教 agent 何时用哪个。
 
 ---
 
@@ -187,11 +188,30 @@ cd dsh-z-gui/app && npx electron-builder --win --x64
 - 沙箱会导致 electron-builder 收尾写 Windows Recent 报退出码 1（产物已生成，非关键）。
 - 打包偶发 `__uninstaller.exe failed opening file`：清理 release 中间产物重试即可。
 
+### 5.4 pnpm 弹窗修复（dsh-runtime 内，重建必被覆盖）
+- 症状：Windows 上 `dsh plugin`（装/卸/更新插件）时 **cmd 窗口一闪而过**。
+- 根因：`dsh-runtime/lib/plugin-Ddi42qoW.js` 的 `spawnSync("pnpm", …, { shell: process.platform === "win32" })` **未设 `windowsHide`**。dsh web 父进程本身无控制台，Windows 为 `cmd.exe /c` 分配新控制台窗口 → 一闪。
+- 修复：给该 `spawnSync` 补 `windowsHide: true`（2026-09-15 已改，重新打包后对新安装生效）。
+- ⚠️ **该文件是 dsh-runtime 构建产物，升级/重建 dsh-runtime（见 4.4 / 11.1 流程）必然覆盖此改动，需重新应用**——与 5.1 目录选择器补丁同理，勿在后续重建后忽略。
+- 对话期间 AI 调用的工具子进程（bash/pwsh、ripgrep、子代理 CLI、MCP 服务器等）均已带 `windowsHide`，不会弹窗；此弹窗仅插件管理路径触发。
+
 ### 5.3 Git 仓库状态
 - 已推送到私有仓库 `zhoubh1983/DSH-Z-Desktop`（活跃分支 `dev/0.1.0`，2026-09-15 同步至 `77e54af`；`main`=0.0.9 正式发行线）。
 - 排除项：`node_modules`（**注意 vendored 插件依赖需 `git add -f`**，见 12.6）、`release/`、`.tools/`、`*.zip`、`bak/`、`**/models/**/*.onnx`、三个独立插件目录（dsh-dafeiyu / dsh-skills-mcp-manager / dsh-whale-musume，各有 upstream）、`deepseek-harness/` 快照。
 - 模型 onnx（90MB+22MB）如需版本化 → Git LFS。
 - GitHub 连接不稳定：推送失败时重试（间歇性 `Connection was reset` / `SSL_ERROR_SYSCALL`）；仓库级已设 `http.postBuffer=500MB`。
+
+### 5.5 dev/打包版共享 `~/.dsh` 的 junction 冲突（EPERM 启动失败）
+- 症状：**开发版（`npm start`）或打包版在另一端启动过之后，dsh 后端连续退出 code=1**，日志报 `EPERM: unlink 'C:\Users\fate\.dsh\profiles\node_modules\@deepseek-ai\dsh'`。
+- 根因：`dsh-app-boot` 把各安装的依赖闭包镜像到共享 `~/.dsh/profiles/node_modules`（Windows 下用 **junction**）。切换 dev/打包版后，残留 junction 指向另一套 runtime；下次 boot 的 heal（`ensureSymlink`）想用 `unlinkSync` 替换它——**Node 的 `unlinkSync` 删不掉 Windows 目录 junction（EPERM）**，于是 boot 崩溃。
+- 判定：`Get-ChildItem "$env:USERPROFILE\.dsh\profiles\node_modules" -Force -Recurse | Where-Object { (Get-Item $_.FullName -Force).LinkType -eq 'Junction' }` 有输出，且 Target 指向非当前 runtime。注意 `@deepseek-ai\dsh` 是**嵌套** junction，须 `-Recurse`。
+- 一键清理：**`dsh-z-gui/scripts/clean-profiles-junctions.ps1`**（先 `-DryRun` 预览，再实删；只删链接本身，不进入目标目录）。清理后任一端下次启动会按自身 runtime 自动重建，自愈。
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File dsh-z-gui/scripts/clean-profiles-junctions.ps1 -DryRun
+  powershell -ExecutionPolicy Bypass -File dsh-z-gui/scripts/clean-profiles-junctions.ps1
+  ```
+- 与 11.1 的 `rewrite-junctions.ps1` 分工：后者是**构建期**迁移 dsh-runtime 目录时重写 junction 目标；本脚本是**运行期**清理共享 profile 目录的残留 junction，两者场景不同。
+- 避免反复踩：开发与打包共用同一 `~/.dsh` 时，切换运行端后如遇启动失败先跑本脚本。
 
 ---
 
@@ -403,6 +423,7 @@ python dsh-z-gui/scripts/ensure-portable-closure.py .
 - **复制整个 profile 会破坏 `.dsh-module-fallback` 符号链接**：该目录是 dsh 管理的 module proxy（schemastery 等），`Copy-Item` 复制成实体目录后 boot 报 `exists and is not a symlink or dsh-managed module proxy`——删除该目录让 dsh 自愈重建即可。
 - **React 合成事件委托失效定位法**：`getEventListeners` 看根容器只有少数事件、`__reactContainer$<hash>` 相同但 onClick 不触发、手动 `dispatchEvent` 也不触发、原生监听正常 → 结论=合成委托失效，改用原生绑定（勿再深挖原因）。
 - **CDP 输入会卡死**：`Input.dispatchMouseEvent` 在 drag region 或窗口拖拽状态异常后可能整页收不到事件，重启应用进程可恢复（测试时先 kill 旧实例）。
+- **关窗/退出期 console.* 抛 EPIPE 崩溃主进程**：启动应用的终端/脚本关闭后 stdout 管道断裂，任何 `console.log` 都会以 `Uncaught Exception: EPIPE: broken pipe` 崩溃（实测触发点 window.js close 处理器、backend.js 后端退出日志）。修复：主进程 `index.js` 加 `process.on('uncaughtException')` 忽略 EPIPE；**关键回调内**（如后端退出后要执行重启逻辑的 handler）必须**本地 try/catch 包住 console 调用**——uncaughtException 处理器会丢弃抛出点之后的代码，本地兜底才能保住后续逻辑（safeLog 模式见 window.js/backend.js）。
 - dsh-context 需会话有**真实消息**才挂载 Context tab（空会话右侧栏为空，非故障）。
 
 ### 12.8 待办/可选
@@ -417,3 +438,67 @@ python dsh-z-gui/scripts/ensure-portable-closure.py .
 - **修复**（提交 `77e54af`）：`ensureBuiltinPlugins` 新增第 2.5 步——扫描 profile bundles，凡带 `.dsh-builtin-fingerprint` 标记但不在当前 `BASE_BUNDLES+BUILTIN_PLUGINS` 的旧插件，自动从 bundle 列表/依赖/node_modules 移除（覆盖未来升级场景）。本机 profile 重启即清。
 - **保留**：鲸鱼娘看板娘（dsh-whale-musume，桌面伴侣）是有意保留的悬浮 overlay，勿误删。
 - **重打包**：`release/` 2026-09-15 重新生成（setup 327.9MB / portable 303.4MB），验证 `dbc-toggle-bar` 消失、标题栏/看板娘/dsh-context 正常。
+
+### 12.10 右侧内嵌浏览器（webview 方案，2026-09-16）
+- **方案**：右侧面板用 Electron `<webview>` 标签（非旧 WebContentsView+MCP 方案）。`main/window.js` webPreferences 加 `webviewTag: true`；`main/browser-bridge.js` 起本地 REST 桥（仅 127.0.0.1，动态端口），实时从 `webContents.getAllWebContents()` 找 `getType()==='webview'` 的 guest 驱动导航/后退/前进/刷新/截图。
+- **桥端点**：`GET /status|/url`、`POST /navigate|/back|/forward|/reload|/screenshot`（非法 URL/file:// 拒绝 400，未知端点 404，webview 未开 409）。
+- **插件**：`dsh-embedded-browser`（host 侧注册 `webview_navigate/url/back/forward/reload/screenshot` 6 工具，桥地址经 `DSH_BROWSER_BRIDGE_URL` env 注入；client 侧 `sidebarRightTabs.register` 注入右侧「浏览器」tab + 地址栏 UI，首次导航前 webview 不挂载——占位提示）。
+- **两个截图坑（模型平台行为，非本地代码）**：
+  1. 工具结果回 **data URL** → 平台当视觉输入解析失败报 `UnknownVizError`。
+  2. 工具结果回 **含 `*.png` 的完整路径** → 平台仍识别为图片引用，照样 `UnknownVizError`（`webview_url`/`navigate` 纯文本正常，唯截图失败，即此因）。
+  - **最终格式**：`已截图保存（W×H），文件 <去扩展名文件名>，位于 <目录>`——不含任何图片扩展名字样即可。`/screenshot` 端点仍把 PNG 存 `~/.dsh/gui/screenshots/` 并回 path（供人找文件），只是工具透出给模型的文案去掉 `.png`。
+- **Agent 端到端验证**：`webview_navigate` 打开百度 → `webview_screenshot` 返回「已截图保存（713×872）…」，轨迹无 UnknownVizError。桥全部端点 + 非法输入健壮性回归通过。
+- 其余坑：agent 用内置 `read_image` 读本地 PNG 报 `Unable to persist attachment`（harness 附件持久化限制，与 webview 无关，未修）。
+
+### 12.11 关窗 EPIPE 崩溃修复 + 桌面伴侣最小化调整（2026-09-16）
+
+**1) EPIPE 崩溃（用户上报，已修复验证）**
+- **现象**：关闭应用时主进程弹 `Uncaught Exception: Error: EPIPE: broken pipe`（`console.log` 写已断 stdout 管道同步抛出），崩溃点 `main/window.js:135` close 处理器。
+- **根因**：从终端/脚本启动应用后关闭该终端，stdout 管道断裂；之后任何 `console.*` 写 stdout 都同步抛 EPIPE。
+- **修复（三层）**：
+  1. `main/index.js` 第 21-28 行（`app.setPath('userData', ...)` 之后）加全局兜底：`process.on('uncaughtException', (e) => { if (e && e.code === 'EPIPE') return; throw e })`。
+  2. **关键**：Node 语义下 `uncaughtException` 处理器存在时进程不崩，但**会跳过抛出点之后的代码**。`main/backend.js` 后端退出回调（`child.on('exit')`）里有 `child=null` + 自动重启逻辑，若不用本地 try/catch 包住其 `console.*`，重启逻辑会被跳过。→ 新增 `safeLog(fn, ...args)`（内部 try/catch），替换 3 处退出敏感 console：`forward` 的 `console.log(line)`、`child.on('exit')` 退出/重启/失败日志、`child.on('error')`。
+  3. `main/window.js` 同样加 `safeLog`，替换 `render-process-gone` / `unresponsive` / `close` 3 处 console（`close` 即崩溃点）。
+- **验证（忠实复现）**：① 断 stdout 管道 + 外部 WM_CLOSE → 无 `Uncaught Exception`；② 断管道 + 强杀后端进程 → 无崩溃且后端**自动重启成功**（新 PID 接管 3080），证明本地 safeLog 保住了重启逻辑。
+- **注意**：仅靠全局兜底不够——退出回调里抛点之后的逻辑会被跳过，必须本地 catch。
+
+**2) 桌面伴侣（鲸鱼娘）最小化调整**
+- **需求**：最小化形态在当前基础上再缩小 50%（64→32px），且启动默认即最小化。随后应要求放大 25%（32→40px），最终调整为右下角显示 60px。
+- **改动**（`builtin-plugins/dsh-whale-musume/`）：
+  - `assets/dsh-whale-moe.js`：`readMode()` 无存储/非法值时默认返回 `"mini"`（3 处 float→mini）；mini 形态尺寸 `mw/mh` 64→32→40→60。
+  - `assets/dsh-whale-moe.css`：`[data-dsh-whale-dense]` 规则 `frame 64px !important` → `60px !important`（否则 root 缩放但 frame 仍被 CSS 钉死）。
+  - `lib/client.js`：资源路由带 `max-age=3600`，boot fetch 需加版本号 `?v=` 击穿缓存（当前 `20260916-5`），否则改动不即时生效。
+- **验证**：CDP（9222）确认 `mode=mini`、root/frame 实际渲染 60×60、位于右下角。
+- **后续增强（同日，用户报「无法拖拽、无法设置大小」）**：mini 形态补上拖拽 + 可调大小。
+  - `assets/dsh-whale-moe.js`：
+    - 新增大小档位 `SIZE_STEPS=[48,60,80,100,120]` + `readSize()`（无存储默认 60，合法域 32–200）+ `nextSize()`（循环下一档并持久化 `whale-moe:size`）；mini/float 共用。
+    - `pointerdown` 拖拽条件放宽为 `float || mini`（原仅 float），拖拽结束时照旧写 `floatX/floatY`；`resolveLayout` mini 分支改用 `readSize()` 并支持 saved 位置 + `dragState` 实时位置（与 float 分支同构，clamp 到视口）。
+    - 右键菜单新增「调整大小（当前px → 下一档）」（调 `nextSize()+reconcile`）与「回到原位」（清 `floatX/floatY` 回默认右下角）。
+  - `assets/dsh-whale-moe.css`：删除 dense 规则对 frame 的 `60px !important` 钉死（改由 JS inline 控制），dense 仅保留隐藏气泡/偏好面板。
+  - **验证（CDP 9222 合成指针事件）**：mini 下 pointerdown→5 步 move(+120,+80)→up，位置随动且 `floatX/floatY` 写入（右缘 clamp 生效：1266 视口、100px 时 1218→1158）；随后模拟点击触发 reconcile 循环，位置保持不 snap 回角落；右键「调整大小」60→80→100 持久化 `whale-moe:size`；「回到原位」清空 floatX/floatY 回到右下角 (vw-mw-14, vh-mh-14)。
+
+### 12.12 全功能测试：遮挡窗口截图挂起与超时保护（2026-09-16）
+
+**现象**：webview 挂载后桥 `/screenshot` 无限挂起（原始 `capturePage()` 不 resolve），桥请求超时。
+**根因（Electron Windows 已知行为）**：**主窗口被其他窗口完全遮挡（occluded）时 `webContents.capturePage()` 挂起**。判定辅助：遮挡时页面 `document.visibilityState==='hidden'` 且 `hasFocus` 可为 true；`IsWindowVisible` 仍为 true（非最小化）。最小化（`visibilityState=hidden`）反而**不**挂起——仅「被覆盖」触发。
+- 排查过程留档：外部 9222 CDP 对 webview `Page.captureScreenshot` **成功**（渲染层正常）；`webContents.debugger.attach('1.3')` + `Page.captureScreenshot` 对 **webview guest 挂起（无效路径，已删）**；`SetForegroundWindow`/置顶/AttachThreadInput 均无法解除 occluded；**最小化→恢复（ShowWindow 6→9）可强制恢复 visible**（测试恢复手段）。
+- **修复**（`main/browser-bridge.js` `/screenshot`）：`capturePage()` 包 `Promise.race` 15s 超时，超时返回 500 + 明确错误「截图超时：DSH 窗口被其他窗口遮挡时无法截取内嵌浏览器画面，请将 DSH 窗口置于前台后重试」，不再无限挂死。宽高改从 PNG 头（IHDR，字节 16-19 宽 / 20-23 高，大端）解析。
+- **回归结果**：`/status` `/url` `/navigate` `/back` `/forward` `/reload` `/screenshot` 全通（截图 713×872）；非法 URL（含 `ftp://`、`file://`）400、未知端点 404、webview 未开 409。Agent 端到端链路（工具→桥）不变。
+
+### 12.13 智能体命令窗口"一闪而过" + 精简历史 scope 报错（2026-09-17）
+**A. 命令子进程弹出 cmd/powershell 窗口闪一下（CREATE_NO_WINDOW 补丁）**
+- 根因：智能体每条命令都是新起的子进程（pwsh/cmd/py/pnpm…），后端走原生 Win32 `CreateProcess`（`@deepseek-ai/dsh-win32-process`），三处创建点（`spawnPipedProcess` / `spawnInheritedJobProcess` / `spawnCurrentTokenJobProcess`）的 `dwCreationFlags` 均未带 `CREATE_NO_WINDOW`(0x08000000)，只配了 `STARTF_USESTDHANDLES`。对控制台子系统的程序，Windows 会新建控制台窗口，进程秒退 → 窗口一闪而过。
+- 修复：`dsh-runtime/node_modules/@deepseek-ai/dsh-win32-process/lib/index.js` 顶部加常量 `CREATE_NO_WINDOW = 0x08000000`，并合入三处创建标志（0→`CREATE_NO_WINDOW`、4→`|4`、1028→`|1028`）。
+- ⚠️ **dsh-win32-process 是 dsh-runtime 内置依赖，升级/重建 dsh-runtime（4.4 / 11.1）必覆盖此补丁，需重新应用**（与 5.1 / 5.4 同理）。
+- 修正 5.4 的旧结论：此前记录"工具子进程均已带 windowsHide"不完整——Node `spawn` 路径是带了的，但 harness 的原生 `CreateProcess` 路径（dsh-subprocess-local → dsh-win32-process）缺隐藏标志。
+
+**B. 「精简历史」按钮报 "conversation.send requires a session scope"**
+- 根因：`builtin-plugins/dsh-conversation-tools/lib/client.js` 的 `compactHistory` 用插件根 ctx 的 `conversation.send('/compact')`；根 ctx 无会话标签，`conversation.scopeId()` 抛错。
+- 修复：点击时经 `ctx.get('sessions').scope(currentId).conversation.send('/compact')`——`currentId = sessions.list.getSnapshot().current`（当前激活会话）；无会话/不可用则提示"当前会话不可用，可直接输入 /compact"。lib 变更随内置插件指纹同步进 profile。
+
+### 12.14 内嵌浏览器移除"手动输网址点火" + 能力边界澄清（2026-09-17）
+- 能力边界（再确认）：内嵌浏览器工具（`webview_navigate/url/back/forward/reload/screenshot`）只覆盖「URL 输入 + 导航/刷新/截图」，**不支持页内点击/表单输入/滚动/读取 DOM/执行 JS**（桥仅 6 端点，见 12.10）。
+- "点火"限制：原 `builtin-plugins/dsh-embedded-browser/lib/client.js` 的 `EmbeddedBrowser` 用 `started` 状态门控 webview——只有手动输过网址才创建 `<webview>`（guest 不存在时桥 `findWebview()` 为 null，Agent 一律 409）。
+- 修复：webview **常驻**（默认 `src="about:blank"`，React 里 `urlInput || 'about:blank'`），标签页一挂载 guest 即存在，Agent 可直接 `webview_navigate`，无需用户先输网址；引导提示改为覆盖层，仅在未导航真实 http(s) 页面时显示。包装层需 `display:flex` 让 webview 撑满。
+- 注意：仍要求右侧「浏览器」标签页至少打开过一次（webview 在该槽渲染后才存在）；截图在面板可见时进行（隐藏时 capturePage 受 12.12 超时保护）。
+- 追加修复：地址栏输入与加载地址**分离成受控输入**（`typed`/`target` 两个 state）——原实现 webview `src` 直接绑输入框，每次敲键 React 重设 `src` 导致 webview 逐键跳转、用户无法正常输入 URL；现仅回车/点「打开」时 `navigate()` 更新 `target`，`did-navigate` 再回填输入框。

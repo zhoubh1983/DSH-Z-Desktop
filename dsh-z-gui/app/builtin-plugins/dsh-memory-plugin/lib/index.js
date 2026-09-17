@@ -537,8 +537,11 @@ function mount(ctx, config) {
       name: "knowledge_search",
       description: "\u5728\u672C\u5730\u77E5\u8BC6\u5E93\u4E2D\u505A\u8BED\u4E49\u68C0\u7D22\uFF0C\u8FD4\u56DE\u547D\u4E2D\u7684\u6587\u6863\u7247\u6BB5\u3002\u5F53\u95EE\u9898\u6D89\u53CA\u5DF2\u5BFC\u5165\u7684\u672C\u5730\u6587\u6863\uFF08\u8FD0\u7EF4\u624B\u518C\u3001\u7B14\u8BB0\u3001\u6280\u672F\u6587\u6863\u7B49\uFF09\u65F6\u8C03\u7528\uFF0C\u4E0D\u8981\u5728\u4E0D\u77E5\u9053\u7B54\u6848\u65F6\u76F4\u63A5\u7F16\u9020\u3002",
       parameters: {
-        query: { type: "string", description: "\u68C0\u7D22\u67E5\u8BE2\uFF0C\u7528\u81EA\u7136\u8BED\u8A00\u63CF\u8FF0\u8981\u627E\u7684\u5185\u5BB9" },
-        k: { type: "integer", description: "\u8FD4\u56DE\u6761\u6570\uFF08\u9ED8\u8BA4 3\uFF0C\u6700\u5927 5\uFF09" }
+        type: "object",
+        properties: {
+          query: { type: "string", description: "\u68C0\u7D22\u67E5\u8BE2\uFF0C\u7528\u81EA\u7136\u8BED\u8A00\u63CF\u8FF0\u8981\u627E\u7684\u5185\u5BB9" },
+          k: { type: "integer", description: "\u8FD4\u56DE\u6761\u6570\uFF08\u9ED8\u8BA4 3\uFF0C\u6700\u5927 5\uFF09" }
+        }
       },
       output: {
         schema: { type: "string" },
@@ -564,8 +567,11 @@ ${h.text}`).join("\n\n");
       name: "memory_search",
       description: "\u68C0\u7D22\u4F60\u5BF9\u7528\u6237\u7684\u6C38\u4E45\u8BB0\u5FC6\uFF08\u957F\u671F\u4E8B\u5B9E\u4E0E\u8FD1\u671F\u5BF9\u8BDD\u6458\u8981\uFF09\u3002\u9700\u8981\u56DE\u5FC6\u7528\u6237\u504F\u597D\u3001\u8EAB\u4EFD\u3001\u6240\u5728\u9879\u76EE\u6216\u5386\u53F2\u5BF9\u8BDD\u5185\u5BB9\u65F6\u8C03\u7528\u3002",
       parameters: {
-        topic: { type: "string", description: "\u60F3\u56DE\u5FC6\u7684\u4E3B\u9898\u6216\u5173\u952E\u8BCD\uFF08\u53EF\u9009\uFF09" },
-        k: { type: "integer", description: "\u8FD4\u56DE\u6761\u6570\uFF08\u9ED8\u8BA4 5\uFF0C\u6700\u5927 10\uFF09" }
+        type: "object",
+        properties: {
+          topic: { type: "string", description: "\u60F3\u56DE\u5FC6\u7684\u4E3B\u9898\u6216\u5173\u952E\u8BCD\uFF08\u53EF\u9009\uFF09" },
+          k: { type: "integer", description: "\u8FD4\u56DE\u6761\u6570\uFF08\u9ED8\u8BA4 5\uFF0C\u6700\u5927 10\uFF09" }
+        }
       },
       output: {
         schema: { type: "string" },

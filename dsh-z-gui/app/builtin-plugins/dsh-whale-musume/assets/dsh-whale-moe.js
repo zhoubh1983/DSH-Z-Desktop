@@ -49,6 +49,27 @@
     try { root.localStorage.setItem("whale-moe:" + key, value ? "1" : "0"); } catch (e) { /* storage unavailable */ }
   }
 
+  /* —— 角色大小：40% – 140%，步进 5%，默认 100%（= 基础 200px 悬浮尺寸）—— */
+  var SIZE_MIN = 40;
+  var SIZE_MAX = 140;
+  var SIZE_STEP = 5;
+  var SIZE_BASE = 200;
+  function readSize() {
+    try {
+      var raw = root.localStorage.getItem("whale-moe:size");
+      if (raw === null) return 100;
+      var n = parseFloat(raw);
+      if (!isFinite(n)) return 100;
+      return clamp(n, SIZE_MIN, SIZE_MAX);
+    } catch (e) { return 100; }
+  }
+  function writeSize(next) {
+    var n = clamp(roundToStep(next, SIZE_STEP), SIZE_MIN, SIZE_MAX);
+    try { root.localStorage.setItem("whale-moe:size", String(n)); } catch (e) { /* storage unavailable */ }
+    return n;
+  }
+  function roundToStep(value, step) { return Math.round(value / step) * step; }
+
   var MODES = Object.freeze({ auto: 1, bar: 1, side: 1, float: 1, mini: 1 });
   function readMode() {
     try {
@@ -149,6 +170,41 @@
       reconcile();
     });
     return btn;
+  }
+
+  /* 「角色大小」滑块行：40%–140% 实时生效并持久化，出现在 ⚙ 菜单与右键菜单 */
+  function createSizeRow(kind) {
+    var wrap = doc.createElement("div");
+    wrap.setAttribute("data-dsh-whale-size-row", kind);
+    wrap.addEventListener("pointerdown", function (event) { event.stopPropagation(); });
+    var cap = doc.createElement("div");
+    cap.setAttribute("data-dsh-whale-size-cap", "");
+    var label = doc.createElement("span");
+    label.textContent = "角色大小";
+    var pct = doc.createElement("strong");
+    pct.setAttribute("data-dsh-whale-size-value", "");
+    cap.appendChild(label);
+    cap.appendChild(pct);
+    var input = doc.createElement("input");
+    input.type = "range";
+    input.min = String(SIZE_MIN);
+    input.max = String(SIZE_MAX);
+    input.step = String(SIZE_STEP);
+    input.setAttribute("data-dsh-whale-size", "");
+    function sync() {
+      var n = readSize();
+      input.value = String(n);
+      pct.textContent = n + "%";
+    }
+    sync();
+    input.addEventListener("input", function () {
+      var n = writeSize(parseFloat(input.value) || SIZE_MIN);
+      pct.textContent = n + "%";
+      reconcile();
+    });
+    wrap.appendChild(cap);
+    wrap.appendChild(input);
+    return wrap;
   }
 
   var layerState = { active: "a", loaded: { a: "", b: "" }, gen: 0, pendingSwap: "", pendingSince: 0 };
@@ -399,6 +455,7 @@
     menu.setAttribute("data-dsh-whale-prefs", "true");
     menu.hidden = true;
     for (var i = 0; i < PREFS.length; i += 1) menu.appendChild(createToggleButton(PREFS[i].label, PREFS[i].key));
+    menu.appendChild(createSizeRow("prefs"));
 
     rootNode.appendChild(frame);
     rootNode.appendChild(bubble);
@@ -512,12 +569,17 @@
       items.push({ label: "小游戏：接点心", action: function () { openCatchGame(); } });
     }
     items.push(
+      { type: "size" },
       { label: "回到原位", action: function () { try { root.localStorage.removeItem("whale-moe:floatX"); root.localStorage.removeItem("whale-moe:floatY"); } catch (e) { /* ignore */ } reconcile(); } },
       { label: "打开看板娘设置", action: function () { var b = [...doc.querySelectorAll("button")].find(function (n) { return (n.textContent || "").trim() === "设置"; }); if (b) b.click(); } },
       { label: "关闭菜单", action: function () { menu.remove(); } }
     );
     for (var i = 0; i < items.length; i += 1) {
       (function (item) {
+        if (item.type === "size") {
+          menu.appendChild(createSizeRow("context"));
+          return;
+        }
         var btn = doc.createElement("button");
         btn.type = "button";
         btn.textContent = item.label;
@@ -1777,8 +1839,9 @@
 
     if (effective === "float") {
       var saved = readFloatPos();
-      var fw = 200;
-      var fh = 200;
+      var sizePct = readSize();
+      var fw = Math.round(SIZE_BASE * sizePct / 100);
+      var fh = Math.round(SIZE_BASE * sizePct / 100);
       /* during an active drag, keep the live pointer position; never snap back */
       var fx = saved ? saved.x : vw - fw - 20;
       var fy = saved ? saved.y : vh - fh - 20;

@@ -6,7 +6,7 @@
 const path = require('node:path')
 const { app, dialog, Menu, ipcMain } = require('electron')
 const { startBackend, stopBackend, restartBackend, consumeBootFailure } = require('./backend')
-const { createWindow, focusWindow, getWindow, consumeRecentAbnormal } = require('./window')
+const { createWindow, focusWindow, getWindow, consumeRecentAbnormal, setTargetUrl } = require('./window')
 const { resolveDshHome } = require('./paths')
 const { loadSettings, saveSettings } = require('./settings')
 const { createTray, destroyTray } = require('./tray')
@@ -17,6 +17,15 @@ const { openRecoveryWindow, registerRecoveryIpc } = require('./recovery')
 
 // 应用数据（缓存/日志等）统一放到 $DSH_HOME/gui，与 dsh 用户数据集中管理。
 app.setPath('userData', path.join(resolveDshHome(), 'gui'))
+
+// 关窗/退出阶段 stdout 管道可能已被父进程（启动它的终端/脚本）关闭，
+// 此时任何 console.* 都会以 "Uncaught Exception: EPIPE: broken pipe" 崩溃主进程
+// （实测触发点：window.js close 处理器、backend.js 后端退出日志）。
+// 全局兜底：EPIPE 属退出期预期，忽略；其它异常保持默认的崩溃/退出行为。
+process.on('uncaughtException', (error) => {
+  if (error && error.code === 'EPIPE') return
+  throw error
+})
 
 // 受限桌面/虚拟化环境下 GPU 不稳定会导致渲染进程崩溃、窗口偶发消失。
 // 本应用是纯 Web UI，禁用硬件加速改用软件渲染以提升稳定性。
@@ -194,6 +203,10 @@ if (!app.requestSingleInstanceLock()) {
         return
       }
 
+      // 先创建窗口并显示启动 loading 页：后端初始化（复制插件/模型 + 插件树加载）
+      // 可能耗时 20~30 秒，避免这段时间无窗口/白屏；后端就绪后再导航到真实界面。
+      const win = createWindow('', settings)
+
       let url
       try {
         const result = await startBackend()
@@ -201,6 +214,7 @@ if (!app.requestSingleInstanceLock()) {
       } catch (error) {
         // 后端连续退出 → 进入恢复模式；其它基础设施错误保持原错误弹窗。
         const failure = consumeBootFailure()
+        if (win && !win.isDestroyed()) win.close()
         if (failure) {
           openRecoveryWindow({
             requested: false,
@@ -217,8 +231,8 @@ if (!app.requestSingleInstanceLock()) {
         return
       }
       appUrl = url
-
-      const win = createWindow(url, settings)
+      setTargetUrl(url)
+      if (win && !win.isDestroyed()) win.loadURL(url)
 
       // 托盘驻留：关闭窗口时隐藏到托盘（退出走托盘/菜单显式退出）。
       try {
